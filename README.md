@@ -111,6 +111,24 @@ The current window is intentionally fixed at 1280x720. Camera cuts use the same
 typed reset decision reserved for a future transactional resize, but swapchain,
 render-pass, pipeline, export, and history recreation is not yet implemented.
 
+## Agent Skill package
+
+This repository includes a project-scoped Agent Skill at
+`.agents/skills/rt4d-reconstruction-stack/`. Install it directly with the
+standard Skills CLI:
+
+```bash
+npx skills add warheart1984-ctrl/rt4d-reconstruction-stack \
+  --skill rt4d-reconstruction-stack \
+  --agent codex
+```
+
+This is a source-repository install, not a listing in AMD's official skill
+catalog. The current AMD catalog uses `SKILL.md` packages rather than a root
+`skill.yaml`, and catalog federation currently requires an AMD-owned source
+repository. See [the AMD Skills and Hyperloom notes](docs/AMD_SKILLS_AND_HYPERLOOM.md)
+for the verified interface, packaging boundary, and future integration seam.
+
 ## License
 
 No project-wide license is granted at this stage. Public visibility does not

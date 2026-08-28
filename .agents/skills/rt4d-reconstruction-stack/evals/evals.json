@@ -1,0 +1,42 @@
+{
+  "evaluations": [
+    {
+      "id": "rt4d-sentinel-gpu-proof",
+      "skill_should_trigger": true,
+      "prompt": "Take armored-sentinel-v1.glb through the RT4D native GPU capture path and leave a truthful receipt.",
+      "expected_behavior": [
+        "Inspect the checked-out CLI and capability documentation before running the proof",
+        "Verify the produced PNG and record hashes and GPU evidence",
+        "Separate geometry-based provisional materials from artist-reviewed materials"
+      ],
+      "unexpected_behavior": [
+        "Claim NVIDIA DLSS, authored UVs, or artist approval without evidence"
+      ]
+    },
+    {
+      "id": "rt4d-temporal-observability",
+      "skill_should_trigger": true,
+      "prompt": "Run an RT4D camera-motion sequence with a camera cut, export the G-buffer and temporal confidence, and summarize the GPU timings.",
+      "expected_behavior": [
+        "Use recon mode with sequence-dir, observability-dir, and metrics",
+        "Confirm first-frame and camera-cut history invalidation",
+        "Describe timing as a bounded hardware observation"
+      ]
+    },
+    {
+      "id": "rt4d-blank-diagnostic-scenes",
+      "skill_should_trigger": true,
+      "prompt": "Taco and Dragon are blank in RT4D and Battle is unclear. Diagnose the renderer and prove the corrected captures without pretending they are final art."
+    },
+    {
+      "id": "rt4d-negative-nvidia-dlss",
+      "skill_should_trigger": false,
+      "prompt": "Install NVIDIA DLSS 4 for my DirectX game running on an RTX 5090."
+    },
+    {
+      "id": "rt4d-negative-hyperloom-llm",
+      "skill_should_trigger": false,
+      "prompt": "Use Hyperloom to optimize the throughput of my vLLM deployment on an MI325X."
+    }
+  ]
+}
