@@ -6,18 +6,18 @@ A custom Vulkan reconstruction pipeline for native GLB geometry on AMD GPUs.
 The current proof runs `armored-sentinel-v1.glb` through:
 
 1. GLB decoding and GPU vertex/index upload
-2. Low-resolution G-buffer generation
-3. Temporal reprojection
-4. Confidence-weighted denoising
-5. Classical super-resolution
-6. Tone-map composition and PNG readback
+2. Base-color factor and texture ingestion
+3. Device-local texture upload through a staging buffer
+4. Per-material low-resolution G-buffer draws
+5. Temporal reprojection and confidence-weighted denoising
+6. Classical super-resolution, tone-map composition, and PNG readback
 
 This project is **not NVIDIA DLSS**. Its current super-resolution path is
 classical compute; ML super-resolution and frame generation are not proven.
 
-Project status: proof-stage native GPU stack with a verified local capture and
-portable source-build CI. It is not yet a production renderer or an artist-
-approved material pipeline.
+Project status: proof-stage native GPU stack with verified material and temporal
+captures plus portable source-build CI. It is not yet a production renderer or
+an artist-approved material pipeline.
 
 See [the capability matrix](docs/CAPABILITIES.md) for the exact boundary
 between verified, partial, and unavailable features, and [the roadmap](docs/ROADMAP.md)
@@ -25,24 +25,29 @@ for the order in which the stack is intended to grow.
 
 ## Verified proof
 
-The verified 1280x720 reconstruction capture was produced on an AMD Radeon RX
-480 using RADV. Exact source, binary, asset, shader, and capture hashes are in:
+The verified v0.3 1280x720 material reconstruction capture was produced on an
+AMD Radeon RX 480 using RADV. Exact source, binary, fixture, shader, and capture
+hashes are in:
 
-- `receipts/rt4d-reconstruction-stack-v0.2-receipt.json`
-- `receipts/armored-sentinel-rt4d-reconstruction-v0.2.run.log`
-- `receipts/armored-sentinel-rt4d-reconstruction-v0.2.png`
+- `receipts/rt4d-reconstruction-stack-v0.3-receipt.json`
+- `receipts/armored-sentinel-material-reconstruction-v0.3.run.log`
+- `receipts/armored-sentinel-material-reconstruction-v0.3.png`
 
-Material status is `provisional_geometry_based`: the render uses decoded
-geometry normals with procedural Lambertian lighting. It is not artist-reviewed
-look development. Source-provided `TEXCOORD_0` coordinates and five primitive
-material assignments are preserved; the source declares six material slots.
-UV authorship has not been independently reviewed, and source textures and
-material parameters are not rendered yet.
+Material status is `provisional_source_materials`: the reconstruction path now
+evaluates glTF base-color factors and base-color textures using five primitive
+draw ranges. The v0.3 texture is generated diagnostic fixture data embedded in
+the GLB; it is source-provided to the runtime but is not artist-authored or
+artist-reviewed look development. Metallic/roughness, alpha modes, emissive,
+normal maps, and full PBR remain outside this release.
+
+See [the material policy](docs/MATERIAL_POLICY.md) for the source-UV and
+generated-planar boundary. The released v0.2 baseline remains available as a
+[tagged release](https://github.com/warheart1984-ctrl/rt4d-reconstruction-stack/releases/tag/v0.2).
 
 ## Build
 
 Requirements: CMake 3.20+, a C++17 compiler, Vulkan development files, GLFW 3,
-and `glslc`.
+`glslc`, and Python 3 when tests are enabled.
 
 ```bash
 cmake -S . -B build-rt4d-recon
@@ -55,8 +60,9 @@ Run from the repository root so shader and fixture paths resolve correctly:
 
 ```bash
 ./build-rt4d-recon/mandala_rasterize recon \
+  --asset=fixtures/armored-sentinel-textured-v0.3.glb \
   --frames=3 \
-  --capture=receipts/armored-sentinel-rt4d-reconstruction-v0.2.png \
+  --capture=receipts/armored-sentinel-material-reconstruction-v0.3.png \
   --debug=gpu-timer
 ```
 
@@ -64,17 +70,22 @@ Run from the repository root so shader and fixture paths resolve correctly:
 frame explicitly rejects history; each completed frame supplies history to the
 next. Capture frame counts are bounded to 1–600.
 
-For the baseline raster path:
+For the factor-only comparison using the released Sentinel without an image:
 
 ```bash
-./build-rt4d-recon/mandala_rasterize sentinel \
-  --frames=2 \
-  --capture=receipts/armored-sentinel-raster-v0.2.png \
+./build-rt4d-recon/mandala_rasterize recon \
+  --asset=armored-sentinel-v1.glb \
+  --frames=3 \
+  --capture=receipts/armored-sentinel-material-factors-v0.3.png \
   --debug=gpu-timer
 ```
 
-The GLB fixture is intentionally kept in this repository because it is small
-and is part of the reproducible proof contract.
+Textured primitives without `TEXCOORD_0` are rejected by default. The explicit
+diagnostic fallback is `--missing-uv=generate-planar-labeled`; generated UVs
+are counted and logged separately from source UVs.
+
+The GLB fixtures are intentionally kept in this repository because they are
+small and form part of the reproducible proof contract.
 
 The current window is intentionally fixed at 1280x720. Transactional resize
 across swapchain, render passes, pipelines, and temporal history is not yet

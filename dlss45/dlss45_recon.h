@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "gbuffer_contract.h"
 #include "dlss45_pass_graph.h"
@@ -42,6 +43,8 @@ public:
     // lrScaleFactor: hr = lr * scale (e.g. 2 => render LR at half resolution).
     bool init(VkDevice device, VkPhysicalDevice phys,
               VkRenderPass rendererRenderPass,
+              const GLTFMeshScene& mesh,
+              VkCommandPool uploadPool, VkQueue uploadQueue,
               uint32_t displayW, uint32_t displayH,
               uint32_t lrScale = 2);
     void shutdown(VkDevice device);
@@ -55,6 +58,8 @@ public:
 
     uint32_t lrWidth() const { return lrW_; }
     uint32_t lrHeight() const { return lrH_; }
+    uint32_t deviceLocalTextureCount() const { return deviceLocalTextureCount_; }
+    uint32_t sourceTextureUploadCount() const { return sourceTextureUploadCount_; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -76,6 +81,13 @@ private:
     ImageObj colorSR_, depthHR_, motionHR_;
 
     VkSampler sampler_ = VK_NULL_HANDLE;
+    VkSampler materialSampler_ = VK_NULL_HANDLE;
+
+    ImageObj fallbackWhiteTexture_;
+    std::vector<ImageObj> baseColorTextures_;
+    std::vector<VkDescriptorSet> materialSets_;
+    uint32_t deviceLocalTextureCount_ = 0;
+    uint32_t sourceTextureUploadCount_ = 0;
 
     // --- descriptor sets / layouts / pool ---
     VkDescriptorSetLayout reprojSetLayout_ = VK_NULL_HANDLE;
@@ -92,6 +104,7 @@ private:
     VkBuffer camUBO_ = VK_NULL_HANDLE;   VkDeviceMemory camUBOMem_ = VK_NULL_HANDLE;
     VkBuffer sceneUBO_ = VK_NULL_HANDLE; VkDeviceMemory sceneUBOMem_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout meshSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout materialSetLayout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout meshSceneLayout_ = VK_NULL_HANDLE;
     VkDescriptorSet meshSet_ = VK_NULL_HANDLE;
 
@@ -117,6 +130,11 @@ private:
                      VkImageUsageFlags usage, VkImageAspectFlags aspect);
     bool createRenderPass();
     bool createMeshResources();
+    bool createMaterialResources(const GLTFMeshScene& mesh,
+                                 VkCommandPool uploadPool, VkQueue uploadQueue);
+    bool uploadBaseColorTexture(ImageObj& image, const uint8_t* rgba,
+                                uint32_t width, uint32_t height,
+                                VkCommandPool uploadPool, VkQueue uploadQueue);
     bool createDescriptors();
     void initializeHistory(VkCommandBuffer cmd);
     void updateHistory(VkCommandBuffer cmd);

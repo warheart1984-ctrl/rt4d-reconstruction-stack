@@ -50,7 +50,9 @@ static bool checkValidationLayerSupport(const std::vector<const char*>& layers) 
 static void printUsage(const char* executable) {
     fprintf(stderr,
             "Usage: %s [living-map|taco|battle|dragon|sentinel|recon] "
-            "[--capture=PATH] [--frames=1..600] [--debug=gpu-timer]\n"
+            "[--asset=PATH] [--capture=PATH] [--frames=1..600] "
+            "[--missing-uv=reject|generate-planar-labeled] "
+            "[--debug=gpu-timer]\n"
             "\n"
             "Only gpu-timer is a supported debug capability. Multi-frame counts "
             "require --capture.\n",
@@ -60,6 +62,9 @@ static void printUsage(const char* executable) {
 int main(int argc, char** argv) {
     RenderScene startScene = RenderScene::LIVING_MAP;
     std::string capturePath;
+    std::string assetPath = "armored-sentinel-v1.glb";
+    GLTFMissingUvPolicy missingUvPolicy =
+        GLTFMissingUvPolicy::RejectTexturedPrimitive;
     uint32_t captureFrames = 1;
     struct DebugConfig {
         bool gpuTimer = false;
@@ -77,6 +82,25 @@ int main(int argc, char** argv) {
         else if (arg == "dragon") startScene = RenderScene::DRAGON_HATCH;
         else if (arg == "sentinel") startScene = RenderScene::SENTINEL;
         else if (arg == "recon") startScene = RenderScene::RECON;
+        else if (arg.rfind("--asset=", 0) == 0) {
+            assetPath = arg.substr(8);
+            if (assetPath.empty()) {
+                fprintf(stderr, "--asset requires a non-empty path\n");
+                return 2;
+            }
+        }
+        else if (arg.rfind("--missing-uv=", 0) == 0) {
+            const std::string policy = arg.substr(13);
+            if (policy == "reject") {
+                missingUvPolicy = GLTFMissingUvPolicy::RejectTexturedPrimitive;
+            } else if (policy == "generate-planar-labeled") {
+                missingUvPolicy = GLTFMissingUvPolicy::GeneratePlanarLabeled;
+            } else {
+                fprintf(stderr, "Invalid --missing-uv policy; expected reject or "
+                                "generate-planar-labeled\n");
+                return 2;
+            }
+        }
         else if (arg.rfind("--capture=", 0) == 0) capturePath = arg.substr(10);
         else if (arg.rfind("--frames=", 0) == 0) {
             try {
@@ -228,6 +252,8 @@ int main(int argc, char** argv) {
     cfg.height = HEIGHT;
     cfg.fovDegrees = 60.0f;
     cfg.scene = startScene;
+    cfg.assetPath = assetPath;
+    cfg.missingUvPolicy = missingUvPolicy;
 
     MandalaRasterRenderer renderer;
     renderer.setDebugFlags(debug.gpuTimer);

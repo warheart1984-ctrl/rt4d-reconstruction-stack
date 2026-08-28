@@ -9,12 +9,12 @@
 - CPU asset-contract test in CI
 - Truthful rejection of unsupported debugging and resize paths
 
-## v0.3 — Material fidelity
+## v0.3 — Material fidelity (implemented)
 
 - Device-local staging upload for base-color textures
 - Per-material draw ranges and base-color factors
-- Source-texture fixture with `usesSourceUv` and separate artist-review receipt fields
-- Explicit fallback policy for missing UVs; generated planar UVs remain labeled
+- Deterministic source-texture fixture with source-UV and artist-review receipt fields
+- Default rejection for missing textured UVs; opt-in planar UVs remain labeled
 
 ## v0.4 — Observability and motion
 

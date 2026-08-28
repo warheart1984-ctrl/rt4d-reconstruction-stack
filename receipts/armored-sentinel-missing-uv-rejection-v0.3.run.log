@@ -1,0 +1,6 @@
+GPU: AMD Radeon RX 480 Graphics (RADV POLARIS10)
+[GLTF] textured primitive 0 has no TEXCOORD_0; explicit generated-UV policy required
+[SENTINEL] failed to load explicit asset path: fixtures/armored-sentinel-textured-missing-uv-v0.3.glb
+Failed to init renderer
+exit_code=1
+capture_created=false

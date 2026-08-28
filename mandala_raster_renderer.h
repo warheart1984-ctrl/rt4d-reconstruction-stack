@@ -34,6 +34,9 @@ struct RenderConfig {
     uint32_t height = 720;
     float fovDegrees = 60.0f;
     RenderScene scene = RenderScene::LIVING_MAP;
+    std::string assetPath = "armored-sentinel-v1.glb";
+    GLTFMissingUvPolicy missingUvPolicy =
+        GLTFMissingUvPolicy::RejectTexturedPrimitive;
 };
 
 struct FrameResources {
