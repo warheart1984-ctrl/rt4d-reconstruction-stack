@@ -38,7 +38,10 @@ void main() {
     float dist = length(vWorldPos - cam.camPos);
     float fog = 1.0 - exp(-battle.fogDensity * dist);
 
-    vec3 color = mix(base * diff, battle.fogColor, fog);
+    // Preserve readable silhouettes when a face points away from the key
+    // light. The ambient floor is diagnostic scene lighting, not PBR.
+    vec3 lit = base * (0.24 + diff * 0.76);
+    vec3 color = mix(lit, battle.fogColor, fog * 0.75);
 
     outColor = vec4(color, 1.0);
 }

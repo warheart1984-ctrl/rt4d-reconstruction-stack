@@ -24,6 +24,8 @@ verified feature by itself.
 | Confidence denoiser | Verified execution | Compute pass runs; image-quality calibration remains provisional |
 | Classical 2x super-resolution | Verified execution | Compute output reaches tone-map and native PNG capture |
 | Tone-map composite/readback | Verified sequence | Native swapchain readback restores present layout and produces one non-black PNG per frame |
+| Six scene selectors | Verified diagnostic execution | Living Map, Taco, Battle, Dragon, Sentinel, and Recon produce complete 1280x720 PNGs; Taco, Battle, and Dragon use Sentinel geometry to prove their shader paths and are not authored scene art |
+| Capture publication integrity | Verified bounded failure path | Capture writes to `.partial`, verifies the PNG signature and terminal IEND chunk, and atomically publishes; an unwritable destination returns failure and leaves no published capture |
 | Internal-image exports | Verified bounded path | Color/depth/normal/material, motion, reprojected color, confidence, and next-frame history export as mapped PNGs plus a manifest |
 | Temporal stability metrics | Verified diagnostics | Per-frame motion, confidence, accepted-history ratio, luma residual, and composite delta are recorded without a quality-grade claim |
 | GPU timestamps | Verified percentile receipt | Raw samples and interpolated p50/p95/p99 are recorded for all frames and a two-frame-warm-up-excluded set |

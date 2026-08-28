@@ -48,6 +48,14 @@ metric semantics, and [the material policy](docs/MATERIAL_POLICY.md) for the
 source-UV and generated-planar boundary. The material classification remains
 provisional; v0.4 does not add artist review or full PBR.
 
+The v0.4.1 maintenance proof also exercises every scene selector and hardens
+PNG publication. Taco, Battle, and Dragon now produce visible shader-path
+diagnostics using the Sentinel mesh as provisional geometry; they are not
+authored Taco, battle, or dragon assets. Captures are written to a `.partial`
+file, checked for a complete PNG envelope, and only then published. See
+`receipts/rt4d-reconstruction-stack-v0.4.1-receipt.json` and
+`receipts/six-scene-v0.4.1/`.
+
 ## Build
 
 Requirements: CMake 3.20+, a C++17 compiler, Vulkan development files, GLFW 3,

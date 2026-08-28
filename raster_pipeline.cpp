@@ -502,16 +502,14 @@ void RasterPipeline::drawTacoScene(VkCommandBuffer cmd, VkBuffer vb,
 }
 
 void RasterPipeline::drawBattleCrowd(VkCommandBuffer cmd, VkBuffer vb,
-                                       VkBuffer ib, uint32_t indexCount,
-                                       VkBuffer instBuf, uint32_t instCount) {
+                                       VkBuffer ib, uint32_t indexCount) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             cameraSceneLayout_, 0, 1, &meshSets_[frameIndex_], 0, nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_[3]);
-    VkBuffer bufs[] = {vb, instBuf};
-    VkDeviceSize offs[] = {0, 0};
-    vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
     vkCmdBindIndexBuffer(cmd, ib, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdDrawIndexed(cmd, indexCount, instCount, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0);
 }
 
 void RasterPipeline::drawBattleAtmosphere(VkCommandBuffer cmd) {

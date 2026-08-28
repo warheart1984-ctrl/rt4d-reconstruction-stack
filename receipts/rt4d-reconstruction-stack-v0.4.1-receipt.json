@@ -1,0 +1,113 @@
+{
+  "schema": "rt4d-reconstruction-stack-receipt/0.4.1",
+  "status": "passed_live_six_scene_visibility_and_capture_integrity_gpu_proof",
+  "created_at": "2026-08-27T23:40:00-04:00",
+  "backend": "Vulkan",
+  "source_control": {
+    "repository": "https://github.com/warheart1984-ctrl/rt4d-reconstruction-stack",
+    "baseline_release": "v0.4",
+    "baseline_commit": "94f5fe86ed5652ec3e1c845f8b441dc00c3b6868",
+    "maintenance_release": "v0.4.1"
+  },
+  "hardware": {
+    "adapter": "AMD Radeon RX 480 Graphics (RADV POLARIS10)",
+    "driver": "Mesa RADV 25.2.8",
+    "capture_dimensions": [1280, 720]
+  },
+  "build": {
+    "proof_binary": "build-rt4d-recon/mandala_rasterize",
+    "proof_binary_sha256": "70d8c27c6c528c324c27c2bba4749297b8a6e1dd097d4f210a7b6910ad797d5d",
+    "compiler_warnings_as_errors": true,
+    "ctest": {
+      "debug": {"passed": 3, "failed": 0},
+      "release": {"passed": 3, "failed": 0},
+      "asan_ubsan": {"passed": 3, "failed": 0}
+    }
+  },
+  "source_asset": {
+    "path": "armored-sentinel-v1.glb",
+    "sha256": "06c76ee61f1582708e50fe208939180ba9b529825052db5afd7f1d2e54e0201e",
+    "vertices": 2210,
+    "indices": 2160,
+    "primitives": 5,
+    "source_uv_primitives": 5,
+    "generated_uv_primitives": 0,
+    "declared_materials": 6
+  },
+  "scene_proof": {
+    "command_template": "./build-rt4d-recon/mandala_rasterize <scene> --frames=3 --debug=gpu-timer --capture=receipts/six-scene-v0.4.1/<scene>.png",
+    "frames_per_scene": 3,
+    "validation_messages_observed": 0,
+    "captures": {
+      "living-map": {
+        "sha256": "9383d9e1d4374e48c1bded6cc3172861d40c59019815bd233963910e60926fa6",
+        "bytes": 178066,
+        "gpu_timing_ms": [0.118, 0.120, 0.119],
+        "visual_inspection": "visible procedural node-and-edge map"
+      },
+      "taco": {
+        "sha256": "57fe9f9ae173068e9d0fa7f171e7845e605f3aa3340a7c9e6df86534f202c77b",
+        "bytes": 69106,
+        "gpu_timing_ms": [0.066, 0.069, 0.067],
+        "visual_inspection": "visible centered Sentinel diagnostic geometry through the Taco shader path"
+      },
+      "battle": {
+        "sha256": "5724918ddcef8df577034bb0514754e4367371a2dcc07d32a956d56104f89c44",
+        "bytes": 60379,
+        "gpu_timing_ms": [0.066, 0.066, 0.068],
+        "visual_inspection": "visible centered Sentinel diagnostic geometry with distinct blue-brown battle shading and readable silhouettes"
+      },
+      "dragon": {
+        "sha256": "59cd3b6721d8f108d9b16699a9f380891ae5dc0d25fcb9f7ee1a7493354a1e03",
+        "bytes": 114629,
+        "gpu_timing_ms": [0.069, 0.068, 0.068],
+        "visual_inspection": "visible centered Sentinel diagnostic geometry with distinct emissive hatch shading"
+      },
+      "sentinel": {
+        "sha256": "57fe9f9ae173068e9d0fa7f171e7845e605f3aa3340a7c9e6df86534f202c77b",
+        "bytes": 69106,
+        "gpu_timing_ms": [0.068, 0.068, 0.068],
+        "visual_inspection": "visible centered Sentinel diagnostic fixture"
+      },
+      "recon": {
+        "sha256": "9428a3c4b3fc1a01bc820ff99513f0d53e44aed0fd0bae515deeeaa6a12eb991",
+        "bytes": 51679,
+        "gpu_timing_ms": [0.840, 0.811, 0.813],
+        "visual_inspection": "visible centered Sentinel after the reconstruction path"
+      }
+    }
+  },
+  "capture_integrity": {
+    "publication": "same-directory temporary write, PNG signature and terminal IEND verification, atomic rename",
+    "temporary_suffix": ".partial",
+    "complete_capture_partial_files_observed": 0,
+    "failure_test": {
+      "command": "./build-rt4d-recon/mandala_rasterize living-map --frames=1 --capture=/proc/rt4d-unwritable-capture.png",
+      "exit_code": 1,
+      "diagnostic": "[capture] incomplete PNG write: /proc/rt4d-unwritable-capture.png; [capture] FAILED",
+      "published_capture_created": false
+    },
+    "boundary": "The envelope check rejects zero-byte and truncated PNG writes. The live forced-failure proof used an unwritable destination; a real post-fix full-storage event was not induced."
+  },
+  "materials": {
+    "classification": "geometry_based_provisional_materials",
+    "runtime_assignment_proven": true,
+    "usesSourceUv": true,
+    "generatedPlanarUv": false,
+    "artist_review": {
+      "status": "not_reviewed",
+      "geometryArtistReviewed": false,
+      "textureArtistReviewed": false,
+      "uvArtistReviewed": false,
+      "materialAssignmentArtistReviewed": false,
+      "lookDevelopmentArtistReviewed": false
+    },
+    "interpretation": "The captures prove executable scene shader paths on imported geometry. Geometry-based provisional materials and diagnostics are not artist-reviewed materials or authored final scene content."
+  },
+  "limitations": [
+    "Taco and Sentinel are byte-identical because both currently render the same Sentinel diagnostic fixture and lighting; this is path execution, not distinct authored content.",
+    "Battle and Dragon use the Sentinel mesh with scene-specific diagnostic shaders; no crowd, battle environment, dragon, egg, or authored scene composition is claimed.",
+    "GPU timings are bounded observations on one RX 480 RADV run, not a cross-driver benchmark.",
+    "A real post-fix storage-exhaustion event was not induced; the implementation rejects any missing, zero-byte, truncated, or incomplete PNG envelope before publication."
+  ]
+}

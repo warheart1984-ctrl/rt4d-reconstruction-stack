@@ -72,6 +72,11 @@ struct HatchUBO {
     float model[16];
 };
 
+static_assert(sizeof(BattleUBO) <= sizeof(SceneUBO),
+              "battle uniforms must fit the shared mesh scene allocation");
+static_assert(sizeof(HatchUBO) <= sizeof(SceneUBO),
+              "hatch uniforms must fit the shared mesh scene allocation");
+
 struct LivingMapNode {
     float position[3];
     float color[3];
@@ -142,8 +147,7 @@ public:
     void drawTacoScene(VkCommandBuffer cmd, VkBuffer vertexBuffer,
                        VkBuffer indexBuffer, uint32_t indexCount);
     void drawBattleCrowd(VkCommandBuffer cmd, VkBuffer vertexBuffer,
-                         VkBuffer indexBuffer, uint32_t indexCount,
-                         VkBuffer instanceBuffer, uint32_t instanceCount);
+                         VkBuffer indexBuffer, uint32_t indexCount);
     void drawBattleAtmosphere(VkCommandBuffer cmd);
     void drawDragonHatch(VkCommandBuffer cmd, VkBuffer vertexBuffer,
                          VkBuffer indexBuffer, uint32_t indexCount);

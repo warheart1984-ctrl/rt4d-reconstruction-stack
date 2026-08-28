@@ -1,6 +1,7 @@
 #include "mandala_raster_renderer.h"
 #include <cstring>
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <fstream>
 #include <sstream>
@@ -16,6 +17,57 @@
 #pragma GCC diagnostic pop
 #endif
 #include <unistd.h>
+
+static bool hasCompletePngEnvelope(const std::filesystem::path& path) {
+    static constexpr std::array<unsigned char, 8> signature = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    static constexpr std::array<unsigned char, 12> iend = {
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+        0xae, 0x42, 0x60, 0x82};
+
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input || input.tellg() < static_cast<std::streamoff>(
+            signature.size() + iend.size()))
+        return false;
+
+    std::array<unsigned char, 8> observedSignature{};
+    input.seekg(0, std::ios::beg);
+    input.read(reinterpret_cast<char*>(observedSignature.data()),
+               static_cast<std::streamsize>(observedSignature.size()));
+    if (!input || observedSignature != signature) return false;
+
+    std::array<unsigned char, 12> observedIend{};
+    input.seekg(-static_cast<std::streamoff>(observedIend.size()),
+                std::ios::end);
+    input.read(reinterpret_cast<char*>(observedIend.data()),
+               static_cast<std::streamsize>(observedIend.size()));
+    return input.good() && observedIend == iend;
+}
+
+static bool writeVerifiedPng(const std::string& path, int width, int height,
+                             const unsigned char* rgba) {
+    const std::filesystem::path destination(path);
+    std::filesystem::path partial = destination;
+    partial += ".partial";
+    std::error_code error;
+    std::filesystem::remove(partial, error);
+
+    const int writeResult = stbi_write_png(
+        partial.string().c_str(), width, height, 4, rgba, width * 4);
+    if (writeResult == 0 || !hasCompletePngEnvelope(partial)) {
+        std::filesystem::remove(partial, error);
+        fprintf(stderr, "[capture] incomplete PNG write: %s\n", path.c_str());
+        return false;
+    }
+
+    std::filesystem::rename(partial, destination, error);
+    if (error) {
+        std::filesystem::remove(partial, error);
+        fprintf(stderr, "[capture] PNG publish failed: %s\n", path.c_str());
+        return false;
+    }
+    return true;
+}
 
 static uint32_t findMemType(VkPhysicalDevice phys, uint32_t bits,
                               VkMemoryPropertyFlags flags) {
@@ -215,17 +267,15 @@ void MandalaRasterRenderer::updateCamera(float aspect) {
     if (config_.scene == RenderScene::LIVING_MAP) {
         livingMap.setCamera(0, 1.5f, 3.0f, 0, 0, 0,
                             config_.fovDegrees, config_.fovDegrees, aspect);
-    } else if (config_.scene == RenderScene::SENTINEL ||
-               config_.scene == RenderScene::RECON) {
+    } else {
         bool cameraCut = false;
-        if (!cameraCutApplied_ &&
+        if (config_.scene == RenderScene::RECON && !cameraCutApplied_ &&
             config_.cameraCutFrame != std::numeric_limits<uint32_t>::max() &&
             renderedFrameCount_ == config_.cameraCutFrame) {
             cameraCutApplied_ = true;
             ++cameraSequenceSegment_;
             cameraCut = true;
-            if (config_.scene == RenderScene::RECON)
-                dlss45.requestHistoryReset(RT4DHistoryResetReason::CameraCut);
+            dlss45.requestHistoryReset(RT4DHistoryResetReason::CameraCut);
         }
         const RT4DCameraPose pose = rt4dDeterministicCameraPose(
             config_.cameraSequence, sentinelMesh.center, sentinelMesh.radius,
@@ -233,6 +283,9 @@ void MandalaRasterRenderer::updateCamera(float aspect) {
         livingMap.setCamera(pose.eye[0], pose.eye[1], pose.eye[2],
                             pose.target[0], pose.target[1], pose.target[2],
                             config_.fovDegrees, config_.fovDegrees, aspect);
+        if (config_.scene != RenderScene::SENTINEL &&
+            config_.scene != RenderScene::RECON)
+            return;
         RT4DCameraSample sample{};
         sample.frameIndex = static_cast<uint32_t>(renderedFrameCount_);
         sample.segment = cameraSequenceSegment_;
@@ -343,20 +396,44 @@ bool MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
             break;
 
         case RenderScene::BATTLE:
-            pipeline_.drawBattleAtmosphere(cmd);
+            if (sentinelLoaded_ && sentinelIndexBuffer_.buffer) {
+                BattleUBO battleUniform{};
+                battleUniform.sunDir[0] = -0.5f;
+                battleUniform.sunDir[1] = -0.8f;
+                battleUniform.sunDir[2] = -0.3f;
+                battleUniform.fogColor[0] = 0.22f;
+                battleUniform.fogColor[1] = 0.14f;
+                battleUniform.fogColor[2] = 0.10f;
+                battleUniform.fogDensity = 0.08f;
+                battleUniform.model[0] = battleUniform.model[5] =
+                    battleUniform.model[10] = battleUniform.model[15] = 1.0f;
+                pipeline_.uploadToBuffer(pipeline_.meshSceneUBO(),
+                                         &battleUniform, sizeof(BattleUBO));
+                pipeline_.drawBattleCrowd(cmd, sentinelVertexBuffer_.buffer,
+                                          sentinelIndexBuffer_.buffer,
+                                          sentinelMesh.indexCount());
+            }
             break;
 
         case RenderScene::DRAGON_HATCH:
             // Same fix as TACO: bind camera+scene set and real mesh geometry.
             if (sentinelLoaded_ && sentinelIndexBuffer_.buffer) {
-                SceneUBO sc{};
-                for (int i = 0; i < 16; i++) sc.model[i] = 0;
-                sc.model[0] = sc.model[5] = sc.model[10] = sc.model[15] = 1.0f;
-                sc.sunDir[0] = -0.5f; sc.sunDir[1] = -0.8f; sc.sunDir[2] = -0.3f;
-                sc.lampPos[0] = 3.0f; sc.lampPos[1] = 2.0f; sc.lampPos[2] = 1.0f;
-                sc.skyColor[0] = 0.4f; sc.skyColor[1] = 0.6f; sc.skyColor[2] = 0.9f;
-                sc.lampColor[0] = 1.0f; sc.lampColor[1] = 0.85f; sc.lampColor[2] = 0.6f;
-                pipeline_.uploadToBuffer(pipeline_.meshSceneUBO(), &sc, sizeof(SceneUBO));
+                HatchUBO hatch{};
+                hatch.lightPos[0] = 2.0f;
+                hatch.lightPos[1] = 3.0f;
+                hatch.lightPos[2] = 1.0f;
+                memcpy(hatch.viewPos, livingMap.camPos, sizeof(hatch.viewPos));
+                hatch.baseColor[0] = 0.15f;
+                hatch.baseColor[1] = 0.07f;
+                hatch.baseColor[2] = 0.025f;
+                hatch.sssColor[0] = 1.0f;
+                hatch.sssColor[1] = 0.28f;
+                hatch.sssColor[2] = 0.04f;
+                hatch.hatchProgress = 0.72f;
+                hatch.model[0] = hatch.model[5] = hatch.model[10] =
+                    hatch.model[15] = 1.0f;
+                pipeline_.uploadToBuffer(pipeline_.meshSceneUBO(),
+                                         &hatch, sizeof(HatchUBO));
                 pipeline_.drawDragonHatch(cmd, sentinelVertexBuffer_.buffer,
                                           sentinelIndexBuffer_.buffer, sentinelMesh.indexCount());
             }
@@ -843,14 +920,14 @@ bool MandalaRasterRenderer::captureScreenshot(
     }
     vkUnmapMemory(device_, stagingMem);
 
-    int ok = stbi_write_png(path.c_str(), (int)w, (int)h, 4,
-                            rgba.data(), (int)(w * 4));
-    if (ok != 0 && rgbaOutput) *rgbaOutput = rgba;
+    const bool ok = writeVerifiedPng(path, static_cast<int>(w),
+                                     static_cast<int>(h), rgba.data());
+    if (ok && rgbaOutput) *rgbaOutput = rgba;
     vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
     vkFreeMemory(device_, stagingMem, nullptr);
     vkDestroyBuffer(device_, stagingBuf, nullptr);
 
-    return ok != 0;
+    return ok;
 }
 
 bool MandalaRasterRenderer::exportReconObservability(
