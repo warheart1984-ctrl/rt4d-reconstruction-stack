@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.glb binary
+*.png binary
+*.spv binary
+
+*.sh text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+stb_image.h linguist-vendored
+stb_image_write.h linguist-vendored
+third_party/** linguist-vendored

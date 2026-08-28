@@ -1,0 +1,22 @@
+# CMake and native build output
+/build*/
+/cmake-build*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Generated shader binaries (rebuilt by compile_shaders.sh)
+/spirv_rasterize/
+*.spv
+
+# Native compiler/editor noise
+*.o
+*.a
+*.so
+*.swp
+.DS_Store
+
+# Superseded black diagnostic capture; retain the final named receipts.
+/receipts/armored-sentinel-recon.png
+/receipts/armored-sentinel-recon.run.log

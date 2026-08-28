@@ -1,0 +1,53 @@
+{
+  "schema": "rt4d-reconstruction-stack-build-receipt/0.2",
+  "status": "passed_live_gpu_capture",
+  "created_at": "2026-08-27T21:38:00-04:00",
+  "staging_root": ".",
+  "backend": "Vulkan",
+  "hardware_observed": { "adapter": "AMD Radeon RX 480 Graphics (RADV POLARIS10)", "driver": "amdgpu" },
+  "build": {
+    "status": "passed",
+    "command": "cmake -S . -B build-rt4d-recon && cmake --build build-rt4d-recon -j2",
+    "binary": "build-rt4d-recon/mandala_rasterize",
+    "binary_sha256": "1d1c18ec5abd2a82bb73712f8cbc757442ec6135e6330100501295cb8c1b5afc"
+  },
+  "asset": {
+    "path": "armored-sentinel-v1.glb",
+    "sha256": "06c76ee61f1582708e50fe208939180ba9b529825052db5afd7f1d2e54e0201e",
+    "decoded_geometry": { "vertices": 2210, "indices": 2160, "center": [0.0, 1.065, -0.272], "radius": 1.16 }
+  },
+  "reconstruction_passes": {
+    "status": "compiled_and_executed",
+    "passes": ["gbuffer", "temporal_reprojection", "denoiser", "classical_super_resolution", "tone_map_composite"],
+    "shader_sha256": {
+      "gbuffer.vert": "6bf5ea13658fdfb4fe351e955c28d1b7ad5be4c9edf8482dc692df2d34088bc8",
+      "gbuffer.frag": "3d922a2815e9a4ac483114b5dce4a61edfce9f4538d39b520e0884c0b6160b5b",
+      "reprojection.comp": "a8eee3ef07c6ce638e4db26dac869d59144063612d6ae7973b0823cb06ca901b",
+      "denoiser.comp": "7fad9e9e3c8ffa5dec6ae159c42083f6140fa60270ec073edaf8bcb1000c7646",
+      "sr_classic.comp": "9e4c66b8dff1e9d18fc7027a284caa09b3baf5762d1fdbe33c5177755d209fe9",
+      "tone_map.frag": "14d14426e3ce2bcc842f6905daf3235ca089a36879cfd94fb094337e9c34a263"
+    }
+  },
+  "live_capture": {
+    "status": "passed",
+    "command": "./build-rt4d-recon/mandala_rasterize recon --capture=receipts/armored-sentinel-rt4d-reconstruction.png",
+    "log": "receipts/armored-sentinel-rt4d-reconstruction.run.log",
+    "output": "receipts/armored-sentinel-rt4d-reconstruction.png",
+    "dimensions": [1280, 720],
+    "sha256": "50e4f2a7e249cb1042bb75716723bbc4cda61fdac977e79d236fce3a2bb598b9",
+    "validation_messages_observed": 0
+  },
+  "baseline_capture": { "output": "receipts/armored-sentinel-raster.png", "sha256": "57fe9f9ae173068e9d0fa7f171e7845e605f3aa3340a7c9e6df86534f202c77b" },
+  "materials": {
+    "status": "provisional_geometry_based",
+    "assignment": "single procedural lambertian lighting from decoded geometry normals; no authored texture/material import",
+    "artist_reviewed": false,
+    "not_claimed": ["artist-approved look development", "authored UV or texture fidelity", "NVIDIA DLSS", "ML super-resolution", "frame generation"]
+  },
+  "runtime_repairs": [
+    "GLB attribute offsets are interpreted as bytes.",
+    "Raster descriptor advancement occurs after, rather than before, the draw.",
+    "The GPU raster camera uses a non-degenerate 3D look-at basis.",
+    "The Vulkan debug messenger is explicitly destroyed before instance teardown."
+  ]
+}
