@@ -2,9 +2,15 @@
 #include <GLFW/glfw3.h>
 
 #include "mandala_raster_renderer.h"
+#include <algorithm>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -47,24 +53,172 @@ static bool checkValidationLayerSupport(const std::vector<const char*>& layers) 
     return true;
 }
 
+static std::string frameDirectoryName(uint32_t frameIndex) {
+    std::ostringstream name;
+    name << "frame-" << std::setw(3) << std::setfill('0') << frameIndex;
+    return name.str();
+}
+
+static bool writeMetricsReceipt(
+    const std::string& path,
+    const RenderConfig& config,
+    uint32_t frameCount,
+    const std::vector<RT4DCameraSample>& cameraSamples,
+    const std::vector<RT4DFrameMetrics>& frameMetrics,
+    const std::vector<double>& gpuTimes,
+    uint64_t historyResetCount) {
+    if (path.empty() || frameMetrics.size() != frameCount ||
+        cameraSamples.size() != frameCount || gpuTimes.size() != frameCount)
+        return false;
+    const std::filesystem::path outputPath(path);
+    if (outputPath.has_parent_path()) {
+        std::error_code error;
+        std::filesystem::create_directories(outputPath.parent_path(), error);
+        if (error) return false;
+    }
+
+    std::vector<double> validConfidence;
+    std::vector<double> validAcceptedRatio;
+    std::vector<double> validResidual;
+    std::vector<double> frameMeanMotion;
+    std::vector<double> compositeDelta;
+    const size_t warmupExcluded = gpuTimes.size() > 2 ? 2u : 0u;
+    const std::vector<double> postWarmupTimes(
+        gpuTimes.begin() + static_cast<std::ptrdiff_t>(warmupExcluded),
+        gpuTimes.end());
+    uint32_t historyValidFrames = 0;
+    for (const RT4DFrameMetrics& metrics : frameMetrics) {
+        frameMeanMotion.push_back(metrics.meanMotionPixels);
+        if (metrics.frameIndex > 0)
+            compositeDelta.push_back(metrics.compositeLumaMaeFromPrevious);
+        if (metrics.historyValid) {
+            ++historyValidFrames;
+            validConfidence.push_back(metrics.meanReprojectionConfidence);
+            validAcceptedRatio.push_back(metrics.acceptedHistoryRatio);
+            validResidual.push_back(metrics.meanAcceptedLumaResidual);
+        }
+    }
+
+    std::ofstream output(outputPath);
+    if (!output) return false;
+    output << std::setprecision(9)
+           << "{\n"
+           << "  \"schema\": \"rt4d-temporal-metrics/0.4\",\n"
+           << "  \"cameraSequence\": \""
+           << rt4dCameraSequenceName(config.cameraSequence) << "\",\n"
+           << "  \"frameCount\": " << frameCount << ",\n"
+           << "  \"cameraCutFrame\": ";
+    if (config.cameraCutFrame == std::numeric_limits<uint32_t>::max())
+        output << "null";
+    else
+        output << config.cameraCutFrame;
+    output << ",\n"
+           << "  \"historyResetCount\": " << historyResetCount << ",\n"
+           << "  \"historyValidFrames\": " << historyValidFrames << ",\n"
+           << "  \"metricBoundary\": "
+              "\"observed diagnostics, not a perceptual-quality score\",\n"
+           << "  \"summary\": {\n"
+           << "    \"meanFrameMotionPixels\": " << rt4dMean(frameMeanMotion) << ",\n"
+           << "    \"p95FrameMotionPixels\": "
+           << rt4dPercentile(frameMeanMotion, 0.95) << ",\n"
+           << "    \"meanReprojectionConfidenceHistoryValidFrames\": "
+           << rt4dMean(validConfidence) << ",\n"
+           << "    \"meanAcceptedHistoryRatioHistoryValidFrames\": "
+           << rt4dMean(validAcceptedRatio) << ",\n"
+           << "    \"meanAcceptedLumaResidualHistoryValidFrames\": "
+           << rt4dMean(validResidual) << ",\n"
+           << "    \"meanCompositeLumaMae\": " << rt4dMean(compositeDelta) << ",\n"
+           << "    \"p95CompositeLumaMae\": "
+           << rt4dPercentile(compositeDelta, 0.95) << "\n"
+           << "  },\n"
+           << "  \"gpuTimingMs\": {\n"
+           << "    \"sampleCount\": " << gpuTimes.size() << ",\n"
+           << "    \"min\": " << *std::min_element(gpuTimes.begin(), gpuTimes.end()) << ",\n"
+           << "    \"p50\": " << rt4dPercentile(gpuTimes, 0.50) << ",\n"
+           << "    \"p95\": " << rt4dPercentile(gpuTimes, 0.95) << ",\n"
+           << "    \"p99\": " << rt4dPercentile(gpuTimes, 0.99) << ",\n"
+           << "    \"max\": " << *std::max_element(gpuTimes.begin(), gpuTimes.end()) << ",\n"
+           << "    \"samples\": [";
+    for (size_t i = 0; i < gpuTimes.size(); ++i) {
+        if (i) output << ", ";
+        output << gpuTimes[i];
+    }
+    output << "]\n"
+           << "  },\n"
+           << "  \"gpuTimingPostWarmupMs\": {\n"
+           << "    \"warmupFramesExcluded\": " << warmupExcluded << ",\n"
+           << "    \"sampleCount\": " << postWarmupTimes.size() << ",\n"
+           << "    \"p50\": " << rt4dPercentile(postWarmupTimes, 0.50) << ",\n"
+           << "    \"p95\": " << rt4dPercentile(postWarmupTimes, 0.95) << ",\n"
+           << "    \"p99\": " << rt4dPercentile(postWarmupTimes, 0.99) << ",\n"
+           << "    \"max\": "
+           << *std::max_element(postWarmupTimes.begin(), postWarmupTimes.end()) << "\n"
+           << "  },\n"
+           << "  \"frames\": [\n";
+    for (size_t i = 0; i < frameMetrics.size(); ++i) {
+        const RT4DFrameMetrics& metrics = frameMetrics[i];
+        output << "    {\"frameIndex\": " << metrics.frameIndex
+               << ", \"historyValid\": "
+               << (metrics.historyValid ? "true" : "false")
+               << ", \"historyResetReason\": \""
+               << rt4dHistoryResetReasonName(metrics.resetReason)
+               << "\", \"foregroundPixels\": " << metrics.foregroundPixels
+               << ", \"meanMotionPixels\": " << metrics.meanMotionPixels
+               << ", \"p95MotionPixels\": " << metrics.p95MotionPixels
+               << ", \"maxMotionPixels\": " << metrics.maxMotionPixels
+               << ", \"meanReprojectionConfidence\": "
+               << metrics.meanReprojectionConfidence
+               << ", \"acceptedHistoryRatio\": " << metrics.acceptedHistoryRatio
+               << ", \"meanAcceptedLumaResidual\": "
+               << metrics.meanAcceptedLumaResidual
+               << ", \"compositeLumaMaeFromPrevious\": "
+               << metrics.compositeLumaMaeFromPrevious << "}";
+        output << (i + 1 == frameMetrics.size() ? "\n" : ",\n");
+    }
+    output << "  ],\n"
+           << "  \"cameraSamples\": [\n";
+    for (size_t i = 0; i < cameraSamples.size(); ++i) {
+        const RT4DCameraSample& sample = cameraSamples[i];
+        output << "    {\"frameIndex\": " << sample.frameIndex
+               << ", \"segment\": " << sample.segment
+               << ", \"cameraCut\": " << (sample.cameraCut ? "true" : "false")
+               << ", \"eye\": [" << sample.pose.eye[0] << ", "
+               << sample.pose.eye[1] << ", " << sample.pose.eye[2]
+               << "], \"target\": [" << sample.pose.target[0] << ", "
+               << sample.pose.target[1] << ", " << sample.pose.target[2] << "]}";
+        output << (i + 1 == cameraSamples.size() ? "\n" : ",\n");
+    }
+    output << "  ]\n"
+           << "}\n";
+    return output.good();
+}
+
 static void printUsage(const char* executable) {
     fprintf(stderr,
             "Usage: %s [living-map|taco|battle|dragon|sentinel|recon] "
             "[--asset=PATH] [--capture=PATH] [--frames=1..600] "
             "[--missing-uv=reject|generate-planar-labeled] "
+            "[--camera-sequence=static|orbit] [--camera-cut-frame=N] "
+            "[--sequence-dir=PATH] [--observability-dir=PATH] "
+            "[--metrics=PATH] "
             "[--debug=gpu-timer]\n"
             "\n"
-            "Only gpu-timer is a supported debug capability. Multi-frame counts "
-            "require --capture.\n",
+            "Only gpu-timer is a supported debug capability. Motion, observability, "
+            "and metrics are supported only in recon mode.\n",
             executable);
 }
 
 int main(int argc, char** argv) {
     RenderScene startScene = RenderScene::LIVING_MAP;
     std::string capturePath;
+    std::string sequenceDirectory;
+    std::string observabilityDirectory;
+    std::string metricsPath;
     std::string assetPath = "armored-sentinel-v1.glb";
     GLTFMissingUvPolicy missingUvPolicy =
         GLTFMissingUvPolicy::RejectTexturedPrimitive;
+    RT4DCameraSequenceMode cameraSequence = RT4DCameraSequenceMode::Static;
+    uint32_t cameraCutFrame = std::numeric_limits<uint32_t>::max();
     uint32_t captureFrames = 1;
     struct DebugConfig {
         bool gpuTimer = false;
@@ -101,6 +255,51 @@ int main(int argc, char** argv) {
                 return 2;
             }
         }
+        else if (arg.rfind("--camera-sequence=", 0) == 0) {
+            const std::string sequence = arg.substr(18);
+            if (sequence == "static")
+                cameraSequence = RT4DCameraSequenceMode::Static;
+            else if (sequence == "orbit")
+                cameraSequence = RT4DCameraSequenceMode::DeterministicOrbit;
+            else {
+                fprintf(stderr, "Invalid --camera-sequence; expected static or orbit\n");
+                return 2;
+            }
+        }
+        else if (arg.rfind("--camera-cut-frame=", 0) == 0) {
+            try {
+                size_t parsed = 0;
+                const std::string value = arg.substr(19);
+                const unsigned long frame = std::stoul(value, &parsed);
+                if (parsed != value.size() || frame > 599)
+                    throw std::out_of_range("camera cut frame");
+                cameraCutFrame = static_cast<uint32_t>(frame);
+            } catch (...) {
+                fprintf(stderr, "Invalid --camera-cut-frame value; expected 0..599\n");
+                return 2;
+            }
+        }
+        else if (arg.rfind("--sequence-dir=", 0) == 0) {
+            sequenceDirectory = arg.substr(15);
+            if (sequenceDirectory.empty()) {
+                fprintf(stderr, "--sequence-dir requires a non-empty path\n");
+                return 2;
+            }
+        }
+        else if (arg.rfind("--observability-dir=", 0) == 0) {
+            observabilityDirectory = arg.substr(20);
+            if (observabilityDirectory.empty()) {
+                fprintf(stderr, "--observability-dir requires a non-empty path\n");
+                return 2;
+            }
+        }
+        else if (arg.rfind("--metrics=", 0) == 0) {
+            metricsPath = arg.substr(10);
+            if (metricsPath.empty()) {
+                fprintf(stderr, "--metrics requires a non-empty path\n");
+                return 2;
+            }
+        }
         else if (arg.rfind("--capture=", 0) == 0) capturePath = arg.substr(10);
         else if (arg.rfind("--frames=", 0) == 0) {
             try {
@@ -131,10 +330,39 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (captureFrames != 1 && capturePath.empty()) {
-        fprintf(stderr, "--frames requires --capture=PATH\n");
+    const bool v04CaptureRequested = !sequenceDirectory.empty() ||
+        !observabilityDirectory.empty() || !metricsPath.empty();
+    if (captureFrames != 1 && capturePath.empty() && !v04CaptureRequested) {
+        fprintf(stderr,
+                "--frames requires --capture, --sequence-dir, --observability-dir, "
+                "or --metrics\n");
         return 2;
     }
+    if (v04CaptureRequested && startScene != RenderScene::RECON) {
+        fprintf(stderr, "v0.4 observability and motion options require recon mode\n");
+        return 2;
+    }
+    if (!metricsPath.empty() && sequenceDirectory.empty()) {
+        fprintf(stderr,
+                "--metrics requires --sequence-dir so composite deltas are observed\n");
+        return 2;
+    }
+    if (cameraSequence != RT4DCameraSequenceMode::Static &&
+        startScene != RenderScene::RECON) {
+        fprintf(stderr, "camera motion sequences require recon mode\n");
+        return 2;
+    }
+    if (cameraCutFrame != std::numeric_limits<uint32_t>::max()) {
+        if (cameraSequence != RT4DCameraSequenceMode::DeterministicOrbit) {
+            fprintf(stderr, "--camera-cut-frame requires --camera-sequence=orbit\n");
+            return 2;
+        }
+        if (cameraCutFrame == 0 || cameraCutFrame >= captureFrames) {
+            fprintf(stderr, "--camera-cut-frame must be within 1..frames-1\n");
+            return 2;
+        }
+    }
+    if (!metricsPath.empty()) debug.gpuTimer = true;
 
     if (!glfwInit()) {
         fprintf(stderr, "Failed to initialize GLFW\n");
@@ -254,33 +482,99 @@ int main(int argc, char** argv) {
     cfg.scene = startScene;
     cfg.assetPath = assetPath;
     cfg.missingUvPolicy = missingUvPolicy;
+    cfg.cameraSequence = cameraSequence;
+    cfg.cameraCutFrame = cameraCutFrame;
 
     MandalaRasterRenderer renderer;
     renderer.setDebugFlags(debug.gpuTimer);
     if (!renderer.init(instance, phys, device, surface, cfg)) {
         fprintf(stderr, "Failed to init renderer\n");
+        renderer.shutdown();
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        vkDestroyDevice(device, nullptr);
+        destroyDebugMessenger(instance, debugMessenger);
+        vkDestroyInstance(instance, nullptr);
+        glfwDestroyWindow(window);
+        glfwTerminate();
         return 1;
     }
     renderer.setScene(startScene);
 
     // Bounded capture mode: render one or more frames, then write the last
     // presented frame. Multi-frame capture is required to exercise history.
-    if (!capturePath.empty()) {
-        fprintf(stderr, "[capture] rendering %u frame(s) to %s ... ",
-                captureFrames, capturePath.c_str());
+    if (!capturePath.empty() || v04CaptureRequested) {
+        fprintf(stderr,
+                "[capture] rendering %u frame(s), sequence=%s, cut=",
+                captureFrames, rt4dCameraSequenceName(cameraSequence));
+        if (cameraCutFrame == std::numeric_limits<uint32_t>::max())
+            fprintf(stderr, "none\n");
+        else
+            fprintf(stderr, "%u\n", cameraCutFrame);
         bool renderOk = true;
-        for (uint32_t frame = 0; frame < captureFrames; ++frame) {
+        if (!sequenceDirectory.empty()) {
+            std::error_code directoryError;
+            std::filesystem::create_directories(sequenceDirectory, directoryError);
+            if (directoryError) {
+                fprintf(stderr, "Failed to create sequence directory\n");
+                renderOk = false;
+            }
+        }
+        std::vector<uint8_t> previousComposite;
+        std::vector<RT4DFrameMetrics> temporalMetrics;
+        temporalMetrics.reserve(captureFrames);
+        for (uint32_t frame = 0; renderOk && frame < captureFrames; ++frame) {
             if (!renderer.renderFrame(1.0f / 60.0f)) {
                 renderOk = false;
                 break;
             }
+            std::vector<uint8_t> currentComposite;
+            if (!sequenceDirectory.empty()) {
+                const std::filesystem::path framePath =
+                    std::filesystem::path(sequenceDirectory) /
+                    (frameDirectoryName(frame) + ".png");
+                if (!renderer.captureScreenshot(framePath.string(),
+                                                &currentComposite)) {
+                    renderOk = false;
+                    break;
+                }
+            }
+
+            if (!metricsPath.empty() || !observabilityDirectory.empty()) {
+                const bool writeImages = !observabilityDirectory.empty() &&
+                    (frame + 1 == captureFrames || frame == cameraCutFrame);
+                std::string exportPath;
+                if (writeImages) {
+                    exportPath = (std::filesystem::path(observabilityDirectory) /
+                                  frameDirectoryName(frame)).string();
+                }
+                RT4DFrameMetrics metrics{};
+                if (!renderer.exportReconObservability(exportPath, frame,
+                                                       writeImages, metrics)) {
+                    renderOk = false;
+                    break;
+                }
+                if (!previousComposite.empty() && !currentComposite.empty()) {
+                    metrics.compositeLumaMaeFromPrevious =
+                        rt4dCompositeLumaMae(previousComposite, currentComposite);
+                }
+                temporalMetrics.push_back(metrics);
+            }
+            if (!currentComposite.empty())
+                previousComposite = std::move(currentComposite);
         }
-        vkDeviceWaitIdle(device);
-        const bool captureOk = renderOk && renderer.captureScreenshot(capturePath);
-        if (captureOk)
-            fprintf(stderr, "OK\n");
-        else
-            fprintf(stderr, "FAILED\n");
+        const bool waitOk = vkDeviceWaitIdle(device) == VK_SUCCESS;
+        bool captureOk = renderOk && waitOk;
+        if (captureOk && !capturePath.empty())
+            captureOk = renderer.captureScreenshot(capturePath);
+        if (captureOk && debug.gpuTimer)
+            captureOk = renderer.finalizeGpuTimings();
+        if (captureOk && !metricsPath.empty()) {
+            captureOk = writeMetricsReceipt(
+                metricsPath, cfg, captureFrames, renderer.cameraSamples(),
+                temporalMetrics, renderer.gpuFrameTimesMs(),
+                renderer.dlss45.historyResetCount());
+        }
+        fprintf(stderr, "[capture] %s\n", captureOk ? "OK" : "FAILED");
         renderer.shutdown();
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyDevice(device, nullptr);

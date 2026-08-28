@@ -8,7 +8,7 @@ layout(location = 3) in float inMaterialID;
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec2 vUV;
-layout(location = 3) out flat vec2 vMotion;
+layout(location = 3) out vec2 vMotion;
 layout(location = 4) out flat float vMaterialID;
 
 layout(set = 0, binding = 0) uniform Camera {

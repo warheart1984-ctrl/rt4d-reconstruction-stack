@@ -23,6 +23,7 @@ set(SOURCES
     ${SRC_DIR}/scene_data.cpp
     ${SRC_DIR}/main.cpp
     ${SRC_DIR}/gltf_mesh.cpp
+    ${SRC_DIR}/rt4d_observability.cpp
     ${SRC_DIR}/dlss45/reprojection_pipeline.cpp
     ${SRC_DIR}/dlss45/denoiser_pipeline.cpp
     ${SRC_DIR}/dlss45/sr_pipeline.cpp
@@ -93,4 +94,16 @@ if(BUILD_TESTING)
         COMMAND ${Python3_EXECUTABLE}
             ${SRC_DIR}/tools/generate_material_fixtures.py --check
     )
+    add_executable(rt4d_observability_tests
+        ${SRC_DIR}/tests/rt4d_observability_test.cpp
+        ${SRC_DIR}/rt4d_observability.cpp
+    )
+    target_include_directories(rt4d_observability_tests PRIVATE ${SRC_DIR})
+    if(MSVC)
+        target_compile_options(rt4d_observability_tests PRIVATE /W4 /WX)
+    else()
+        target_compile_options(rt4d_observability_tests PRIVATE
+            -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME rt4d_observability_contract COMMAND rt4d_observability_tests)
 endif()

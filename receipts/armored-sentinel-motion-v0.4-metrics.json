@@ -1,0 +1,63 @@
+{
+  "schema": "rt4d-temporal-metrics/0.4",
+  "cameraSequence": "deterministic-orbit-v1",
+  "frameCount": 12,
+  "cameraCutFrame": 6,
+  "historyResetCount": 2,
+  "historyValidFrames": 10,
+  "metricBoundary": "observed diagnostics, not a perceptual-quality score",
+  "summary": {
+    "meanFrameMotionPixels": 0.760746667,
+    "p95FrameMotionPixels": 1.04423027,
+    "meanReprojectionConfidenceHistoryValidFrames": 0.978780422,
+    "meanAcceptedHistoryRatioHistoryValidFrames": 0.985101753,
+    "meanAcceptedLumaResidualHistoryValidFrames": 0.00471685239,
+    "meanCompositeLumaMae": 0.00277293288,
+    "p95CompositeLumaMae": 0.00905591641
+  },
+  "gpuTimingMs": {
+    "sampleCount": 12,
+    "min": 0.81664,
+    "p50": 3.97328,
+    "p95": 4.10428,
+    "p99": 4.113784,
+    "max": 4.11616,
+    "samples": [4.11616, 3.93232, 3.98672, 3.94864, 0.81664, 3.95984, 4.09456, 3.95536, 3.99056, 3.94288, 4.0208, 4.00064]
+  },
+  "gpuTimingPostWarmupMs": {
+    "warmupFramesExcluded": 2,
+    "sampleCount": 10,
+    "p50": 3.97328,
+    "p95": 4.061368,
+    "p99": 4.0879216,
+    "max": 4.09456
+  },
+  "frames": [
+    {"frameIndex": 0, "historyValid": false, "historyResetReason": "initial_frame", "foregroundPixels": 8126, "meanMotionPixels": 0, "p95MotionPixels": 0, "maxMotionPixels": 0, "meanReprojectionConfidence": 0, "acceptedHistoryRatio": 0, "meanAcceptedLumaResidual": 0, "compositeLumaMaeFromPrevious": 0},
+    {"frameIndex": 1, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 8036, "meanMotionPixels": 1.02140514, "p95MotionPixels": 1.23999084, "maxMotionPixels": 1.31064852, "meanReprojectionConfidence": 0.981312554, "acceptedHistoryRatio": 0.985689398, "meanAcceptedLumaResidual": 0.00305425976, "compositeLumaMaeFromPrevious": 0.0014999564},
+    {"frameIndex": 2, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7970, "meanMotionPixels": 1.02842966, "p95MotionPixels": 1.23769044, "maxMotionPixels": 1.29718623, "meanReprojectionConfidence": 0.982886845, "acceptedHistoryRatio": 0.987202008, "meanAcceptedLumaResidual": 0.00257272094, "compositeLumaMaeFromPrevious": 0.00138407302},
+    {"frameIndex": 3, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7895, "meanMotionPixels": 1.0354385, "p95MotionPixels": 1.23442382, "maxMotionPixels": 1.28358071, "meanReprojectionConfidence": 0.98337687, "acceptedHistoryRatio": 0.98758708, "meanAcceptedLumaResidual": 0.00286687131, "compositeLumaMaeFromPrevious": 0.00139987883},
+    {"frameIndex": 4, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7829, "meanMotionPixels": 1.04207042, "p95MotionPixels": 1.22974785, "maxMotionPixels": 1.27783336, "meanReprojectionConfidence": 0.984146257, "acceptedHistoryRatio": 0.988248818, "meanAcceptedLumaResidual": 0.00305910962, "compositeLumaMaeFromPrevious": 0.00139809392},
+    {"frameIndex": 5, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7790, "meanMotionPixels": 1.04687008, "p95MotionPixels": 1.22353366, "maxMotionPixels": 1.28531004, "meanReprojectionConfidence": 0.98231998, "acceptedHistoryRatio": 0.986264442, "meanAcceptedLumaResidual": 0.00315739503, "compositeLumaMaeFromPrevious": 0.00149032712},
+    {"frameIndex": 6, "historyValid": false, "historyResetReason": "camera_cut", "foregroundPixels": 8221, "meanMotionPixels": 0, "p95MotionPixels": 0, "maxMotionPixels": 0, "meanReprojectionConfidence": 0, "acceptedHistoryRatio": 0, "meanAcceptedLumaResidual": 0, "compositeLumaMaeFromPrevious": 0.0164587834},
+    {"frameIndex": 7, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 8196, "meanMotionPixels": 0.811964329, "p95MotionPixels": 1.2572804, "maxMotionPixels": 1.5050929, "meanReprojectionConfidence": 0.969392282, "acceptedHistoryRatio": 0.977306003, "meanAcceptedLumaResidual": 0.0068831625, "compositeLumaMaeFromPrevious": 0.00165304937},
+    {"frameIndex": 8, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 8079, "meanMotionPixels": 0.802793222, "p95MotionPixels": 1.25505161, "maxMotionPixels": 1.51661426, "meanReprojectionConfidence": 0.978241743, "acceptedHistoryRatio": 0.986755787, "meanAcceptedLumaResidual": 0.00605645094, "compositeLumaMaeFromPrevious": 0.0013685036},
+    {"frameIndex": 9, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7969, "meanMotionPixels": 0.791602897, "p95MotionPixels": 1.25103392, "maxMotionPixels": 1.49613231, "meanReprojectionConfidence": 0.977642291, "acceptedHistoryRatio": 0.986196511, "meanAcceptedLumaResidual": 0.00633962753, "compositeLumaMaeFromPrevious": 0.00128953753},
+    {"frameIndex": 10, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7877, "meanMotionPixels": 0.77888465, "p95MotionPixels": 1.24535178, "maxMotionPixels": 1.50419876, "meanReprojectionConfidence": 0.974072026, "acceptedHistoryRatio": 0.982861495, "meanAcceptedLumaResidual": 0.00661237183, "compositeLumaMaeFromPrevious": 0.00129689188},
+    {"frameIndex": 11, "historyValid": true, "historyResetReason": "none", "foregroundPixels": 7722, "meanMotionPixels": 0.769501107, "p95MotionPixels": 1.24230618, "maxMotionPixels": 1.48403217, "meanReprojectionConfidence": 0.974413368, "acceptedHistoryRatio": 0.982905983, "meanAcceptedLumaResidual": 0.00656655441, "compositeLumaMaeFromPrevious": 0.00126316656}
+  ],
+  "cameraSamples": [
+    {"frameIndex": 0, "segment": 0, "cameraCut": false, "eye": [-0.576353729, 1.12302136, 2.5714922], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 1, "segment": 0, "cameraCut": false, "eye": [-0.505099952, 1.12694788, 2.58501101], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 2, "segment": 0, "cameraCut": false, "eye": [-0.433530569, 1.13076115, 2.59674454], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 3, "segment": 0, "cameraCut": false, "eye": [-0.361690164, 1.13435125, 2.6066854], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 4, "segment": 0, "cameraCut": false, "eye": [-0.289623767, 1.13761473, 2.61482716], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 5, "segment": 0, "cameraCut": false, "eye": [-0.217376351, 1.14045751, 2.6211648], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 6, "segment": 1, "cameraCut": true, "eye": [1.8689208, 1.14279759, 1.94711113], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 7, "segment": 1, "cameraCut": false, "eye": [1.92380261, 1.14456749, 1.89969945], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 8, "segment": 1, "cameraCut": false, "eye": [1.97748208, 1.14571619, 1.85093093], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 9, "segment": 1, "cameraCut": false, "eye": [2.02992535, 1.14621055, 1.80083561], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 10, "segment": 1, "cameraCut": false, "eye": [2.08110046, 1.14603651, 1.7494452], "target": [0, 1.06499994, -0.271750003]},
+    {"frameIndex": 11, "segment": 1, "cameraCut": false, "eye": [2.13097477, 1.14519882, 1.69679153], "target": [0, 1.06499994, -0.271750003]}
+  ]
+}

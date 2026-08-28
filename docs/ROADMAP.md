@@ -16,11 +16,11 @@
 - Deterministic source-texture fixture with source-UV and artist-review receipt fields
 - Default rejection for missing textured UVs; opt-in planar UVs remain labeled
 
-## v0.4 — Observability and motion
+## v0.4 — Observability and motion (implemented)
 
 - G-buffer, motion, reprojection-confidence, and history exports
 - Deterministic camera-motion capture sequences
-- History reset on camera cuts and future transactional resize
+- History reset on camera cuts plus a typed reset seam for future transactional resize
 - Temporal stability metrics and percentile GPU timing receipts
 
 ## v0.5 — Automation and portability

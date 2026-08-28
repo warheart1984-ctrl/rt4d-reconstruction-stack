@@ -217,12 +217,36 @@ void MandalaRasterRenderer::updateCamera(float aspect) {
                             config_.fovDegrees, config_.fovDegrees, aspect);
     } else if (config_.scene == RenderScene::SENTINEL ||
                config_.scene == RenderScene::RECON) {
-        float ex = sentinelMesh.center[0];
-        float ey = sentinelMesh.center[1];
-        float ez = sentinelMesh.center[2] + sentinelMesh.radius * 2.5f;
-        livingMap.setCamera(ex, ey, ez,
-                            sentinelMesh.center[0], sentinelMesh.center[1], sentinelMesh.center[2],
+        bool cameraCut = false;
+        if (!cameraCutApplied_ &&
+            config_.cameraCutFrame != std::numeric_limits<uint32_t>::max() &&
+            renderedFrameCount_ == config_.cameraCutFrame) {
+            cameraCutApplied_ = true;
+            ++cameraSequenceSegment_;
+            cameraCut = true;
+            if (config_.scene == RenderScene::RECON)
+                dlss45.requestHistoryReset(RT4DHistoryResetReason::CameraCut);
+        }
+        const RT4DCameraPose pose = rt4dDeterministicCameraPose(
+            config_.cameraSequence, sentinelMesh.center, sentinelMesh.radius,
+            static_cast<uint32_t>(renderedFrameCount_), cameraSequenceSegment_);
+        livingMap.setCamera(pose.eye[0], pose.eye[1], pose.eye[2],
+                            pose.target[0], pose.target[1], pose.target[2],
                             config_.fovDegrees, config_.fovDegrees, aspect);
+        RT4DCameraSample sample{};
+        sample.frameIndex = static_cast<uint32_t>(renderedFrameCount_);
+        sample.segment = cameraSequenceSegment_;
+        sample.cameraCut = cameraCut;
+        sample.pose = pose;
+        cameraSamples_.push_back(sample);
+        if (config_.cameraSequence != RT4DCameraSequenceMode::Static || cameraCut) {
+            fprintf(stderr,
+                    "[CAMERA] frame=%u sequence=%s segment=%u cut=%s "
+                    "eye=(%.6f,%.6f,%.6f)\n",
+                    sample.frameIndex, rt4dCameraSequenceName(config_.cameraSequence),
+                    sample.segment, cameraCut ? "true" : "false",
+                    pose.eye[0], pose.eye[1], pose.eye[2]);
+        }
     }
 }
 
@@ -248,7 +272,7 @@ bool MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
                           sentinelVertexBuffer_.buffer, sentinelIndexBuffer_.buffer,
                           livingMap.viewMatrix, livingMap.projMatrix, livingMap.camPos,
                           swapIndex, framebuffers_[swapIndex],
-                          ext.width, ext.height);
+                          ext.width, ext.height, renderedFrameCount_);
         }
         if (debugGpuTimer_) gpuTimer_.write(cmd, 1);  // recon done
         return vkEndCommandBuffer(cmd) == VK_SUCCESS;
@@ -380,6 +404,12 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
     device_ = device;
     config_ = cfg;
     time_ = 0.0f;
+    renderedFrameCount_ = 0;
+    timingSamplesCollected_ = 0;
+    gpuFrameTimesMs_.clear();
+    cameraSequenceSegment_ = 0;
+    cameraCutApplied_ = false;
+    cameraSamples_.clear();
 
     uint32_t qfCount;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
@@ -456,28 +486,41 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
     }
 
     if (debugGpuTimer_) {
-        gpuTimer_.init(device_, phys_, 64);
+        if (!gpuTimer_.init(device_, phys_, 64)) {
+            fprintf(stderr, "[VULKAN] GPU query-pool creation failed\n");
+            return false;
+        }
         // One-time command buffer to reset both query pools before first use
         VkCommandBufferAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         alloc.commandPool = cmdPool_;
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         alloc.commandBufferCount = 1;
-        VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(device_, &alloc, &cmd);
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        if (vkAllocateCommandBuffers(device_, &alloc, &cmd) != VK_SUCCESS)
+            return false;
         VkCommandBufferBeginInfo cbbi{};
         cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &cbbi);
+        if (vkBeginCommandBuffer(cmd, &cbbi) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+            return false;
+        }
         vkCmdResetQueryPool(cmd, gpuTimer_.pools[0], 0, gpuTimer_.count);
         vkCmdResetQueryPool(cmd, gpuTimer_.pools[1], 0, gpuTimer_.count);
-        vkEndCommandBuffer(cmd);
+        if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+            return false;
+        }
         VkSubmitInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
         si.pCommandBuffers = &cmd;
-        vkQueueSubmit(graphicsQueue_, 1, &si, VK_NULL_HANDLE);
-        vkQueueWaitIdle(graphicsQueue_);
+        if (vkQueueSubmit(graphicsQueue_, 1, &si, VK_NULL_HANDLE) != VK_SUCCESS ||
+            vkQueueWaitIdle(graphicsQueue_) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+            return false;
+        }
         vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
     }
 
@@ -527,14 +570,29 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
     int prevPool = 1 - gpuTimer_.currentPool;
     if (debugGpuTimer_ && renderedFrameCount_ > 0) {
         if (config_.scene == RenderScene::RECON) {
-            double frameMs = gpuTimer_.getMs(0, 1, prevPool);
+            double frameMs = 0.0;
+            if (!gpuTimer_.getMs(0, 1, prevPool, frameMs)) {
+                fprintf(stderr, "[VULKAN] GPU timestamp read failed\n");
+                return false;
+            }
+            gpuFrameTimesMs_.push_back(frameMs);
+            ++timingSamplesCollected_;
             fprintf(stderr, "[gpu-timer] RECON total: %.3f ms\n", frameMs);
             fflush(stderr);
         } else {
-            double totalMs = gpuTimer_.getMs(0, 4, prevPool);
-            double renderPassMs = gpuTimer_.getMs(0, 2, prevPool);
-            double sceneMs = gpuTimer_.getMs(2, 3, prevPool);
-            double endPassMs = gpuTimer_.getMs(3, 4, prevPool);
+            double totalMs = 0.0;
+            double renderPassMs = 0.0;
+            double sceneMs = 0.0;
+            double endPassMs = 0.0;
+            if (!gpuTimer_.getMs(0, 4, prevPool, totalMs) ||
+                !gpuTimer_.getMs(0, 2, prevPool, renderPassMs) ||
+                !gpuTimer_.getMs(2, 3, prevPool, sceneMs) ||
+                !gpuTimer_.getMs(3, 4, prevPool, endPassMs)) {
+                fprintf(stderr, "[VULKAN] GPU timestamp read failed\n");
+                return false;
+            }
+            gpuFrameTimesMs_.push_back(totalMs);
+            ++timingSamplesCollected_;
             fprintf(stderr, "[gpu-timer] total: %.3f ms  (renderPass: %.3f  scene: %.3f  endPass: %.3f)\n",
                     totalMs, renderPassMs, sceneMs, endPassMs);
             fflush(stderr);
@@ -607,9 +665,13 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
     return true;
 }
 
-bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
+bool MandalaRasterRenderer::captureScreenshot(
+    const std::string& path, std::vector<uint8_t>* rgbaOutput) {
     // Wait for GPU to finish the current frame to ensure swapchain image is ready.
-    vkDeviceWaitIdle(device_);
+    if (vkDeviceWaitIdle(device_) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] screenshot device wait failed\n");
+        return false;
+    }
 
     VkExtent2D ext = swapchain_.extent();
     uint32_t w = ext.width;
@@ -663,7 +725,13 @@ bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
     VkCommandBufferBeginInfo cbbi{};
     cbbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     cbbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &cbbi);
+    if (vkBeginCommandBuffer(cmd, &cbbi) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] screenshot command buffer begin failed\n");
+        vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+        vkFreeMemory(device_, stagingMem, nullptr);
+        vkDestroyBuffer(device_, stagingBuf, nullptr);
+        return false;
+    }
 
     // Transition swapchain image from PRESENT_SRC to TRANSFER_SRC.
     VkImageMemoryBarrier barr{};
@@ -699,6 +767,17 @@ bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
     vkCmdCopyImageToBuffer(cmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                            stagingBuf, 1, &bic);
 
+    // Repeated capture sequences need the swapchain image restored before it
+    // can be acquired and presented by a later frame.
+    barr.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barr.dstAccessMask = 0;
+    barr.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barr.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &barr);
+
     // Transition buffer for host read.
     VkBufferMemoryBarrier bmb{};
     bmb.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -714,7 +793,13 @@ bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
                          VK_PIPELINE_STAGE_HOST_BIT,
                          0, 0, nullptr, 1, &bmb, 0, nullptr);
 
-    vkEndCommandBuffer(cmd);
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] screenshot command buffer end failed\n");
+        vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+        vkFreeMemory(device_, stagingMem, nullptr);
+        vkDestroyBuffer(device_, stagingBuf, nullptr);
+        return false;
+    }
 
     // Submit and wait.
     VkSubmitInfo si{};
@@ -727,11 +812,23 @@ bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
         vkDestroyBuffer(device_, stagingBuf, nullptr);
         return false;
     }
-    vkQueueWaitIdle(graphicsQueue_);
+    if (vkQueueWaitIdle(graphicsQueue_) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] screenshot queue wait failed\n");
+        vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+        vkFreeMemory(device_, stagingMem, nullptr);
+        vkDestroyBuffer(device_, stagingBuf, nullptr);
+        return false;
+    }
 
     // Map and write PNG (swapchain is B8G8R8A8_UNORM -> stb wants RGBA).
-    void* data;
-    vkMapMemory(device_, stagingMem, 0, bufferSize, 0, &data);
+    void* data = nullptr;
+    if (vkMapMemory(device_, stagingMem, 0, bufferSize, 0, &data) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] screenshot staging-memory map failed\n");
+        vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
+        vkFreeMemory(device_, stagingMem, nullptr);
+        vkDestroyBuffer(device_, stagingBuf, nullptr);
+        return false;
+    }
     // Allocate RGBA buffer for stb.
     std::vector<unsigned char> rgba(w * h * 4);
     const uint32_t* src = static_cast<const uint32_t*>(data);
@@ -746,12 +843,36 @@ bool MandalaRasterRenderer::captureScreenshot(const std::string& path) {
     }
     vkUnmapMemory(device_, stagingMem);
 
-    int ok = stbi_write_png(path.c_str(), (int)w, (int)h, 4, rgba.data(), (int)(w * 4));
+    int ok = stbi_write_png(path.c_str(), (int)w, (int)h, 4,
+                            rgba.data(), (int)(w * 4));
+    if (ok != 0 && rgbaOutput) *rgbaOutput = rgba;
     vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
     vkFreeMemory(device_, stagingMem, nullptr);
     vkDestroyBuffer(device_, stagingBuf, nullptr);
 
     return ok != 0;
+}
+
+bool MandalaRasterRenderer::exportReconObservability(
+    const std::string& directory, uint32_t frameIndex, bool writeImages,
+    RT4DFrameMetrics& metrics) {
+    if (config_.scene != RenderScene::RECON) return false;
+    return dlss45.exportObservability(cmdPool_, graphicsQueue_, directory,
+                                      frameIndex, writeImages, metrics);
+}
+
+bool MandalaRasterRenderer::finalizeGpuTimings() {
+    if (!debugGpuTimer_ || timingSamplesCollected_ >= renderedFrameCount_)
+        return true;
+    if (vkDeviceWaitIdle(device_) != VK_SUCCESS) return false;
+    const int lastPool = 1 - gpuTimer_.currentPool;
+    double frameMs = 0.0;
+    const uint32_t endQuery = config_.scene == RenderScene::RECON ? 1u : 4u;
+    if (!gpuTimer_.getMs(0, endQuery, lastPool, frameMs)) return false;
+    gpuFrameTimesMs_.push_back(frameMs);
+    ++timingSamplesCollected_;
+    fprintf(stderr, "[gpu-timer] final sample: %.3f ms\n", frameMs);
+    return timingSamplesCollected_ == renderedFrameCount_;
 }
 
 void MandalaRasterRenderer::setScene(RenderScene scene) {
