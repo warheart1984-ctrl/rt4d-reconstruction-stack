@@ -9,7 +9,12 @@ struct GLTFMeshVertex {
     float normal[3];
     float uv[2];
     float materialId;
+    float _pad;  // pad to 40 bytes: 16-byte-friendly, matches alignment convention of
+                 // LivingMapEdge._pad / CelParams._pN in this codebase.
 };
+static_assert(sizeof(GLTFMeshVertex) == 40,
+              "GLTFMeshVertex must stay 40 bytes; vertex-input stride and shader "
+              "layout depend on it (do not remove _pad).");
 
 enum class GLTFMissingUvPolicy : uint8_t {
     RejectTexturedPrimitive = 0,
