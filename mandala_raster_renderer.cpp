@@ -412,30 +412,27 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
 
     if (!uploadLivingMapBuffers()) return false;
 
-    const char* sentinelCandidates[] = {
-        "armored-sentinel-v1.glb",
-        "../armored-sentinel-v1.glb",
-        "../../armored-sentinel-v1.glb",
-        "../../armored-sentinel-v1.glb",
-        "../../../docs/proofs/rt4d-fox-fixture-smoke/fox-fixture.glb",
-        "../../docs/proofs/rt4d-fox-fixture-smoke/fox-fixture.glb",
-        "docs/proofs/rt4d-fox-fixture-smoke/fox-fixture.glb"
-    };
-    for (auto* p : sentinelCandidates) {
-        if (sentinelMesh.load(p)) {
-            fprintf(stderr, "[SENTINEL] loaded %s (%u verts, %u idx, %u primitives, "
-                            "%u/%u source-UV, %u declared material slots; center %.3f %.3f %.3f; radius %.3f)\n",
-                    p, sentinelMesh.vertexCount(), sentinelMesh.indexCount(),
-                    sentinelMesh.primitiveCount(), sentinelMesh.sourceUvPrimitiveCount(),
-                    sentinelMesh.primitiveCount(), sentinelMesh.materialCount(),
-                    sentinelMesh.center[0], sentinelMesh.center[1], sentinelMesh.center[2],
-                    sentinelMesh.radius);
-            break;
-        }
+    GLTFLoadOptions loadOptions{};
+    loadOptions.missingUvPolicy = config_.missingUvPolicy;
+    if (!sentinelMesh.load(config_.assetPath.c_str(), loadOptions)) {
+        fprintf(stderr, "[SENTINEL] failed to load explicit asset path: %s\n",
+                config_.assetPath.c_str());
+        return false;
     }
-    if (sentinelMesh.vertexCount() == 0) {
-        fprintf(stderr, "[SENTINEL] no GLB available; sentinel scene disabled\n");
-    } else {
+    fprintf(stderr, "[SENTINEL] loaded %s (%u verts, %u idx, %u primitives, "
+                    "%u/%u source-UV, %u generated-UV, %u declared materials, "
+                    "%u decoded texture(s), %u textured material(s), UV policy %s; "
+                    "center %.3f %.3f %.3f; radius %.3f)\n",
+            config_.assetPath.c_str(), sentinelMesh.vertexCount(),
+            sentinelMesh.indexCount(), sentinelMesh.primitiveCount(),
+            sentinelMesh.sourceUvPrimitiveCount(), sentinelMesh.primitiveCount(),
+            sentinelMesh.generatedUvPrimitiveCount(), sentinelMesh.materialCount(),
+            sentinelMesh.decodedTextureCount(), sentinelMesh.sourceTextureMaterialCount(),
+            config_.missingUvPolicy == GLTFMissingUvPolicy::RejectTexturedPrimitive
+                ? "reject" : "generate-planar-labeled",
+            sentinelMesh.center[0], sentinelMesh.center[1], sentinelMesh.center[2],
+            sentinelMesh.radius);
+    {
         VkDeviceSize vsz = sentinelMesh.vertexCount() * sizeof(GLTFMeshVertex);
         sentinelVertexBuffer_ = pipeline_.allocBuffer(vsz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -452,8 +449,8 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
         sentinelLoaded_ = true;
     }
 
-    if (!dlss45.init(device_, phys_, renderPass_, config_.width,
-                     config_.height, 2)) {
+    if (!dlss45.init(device_, phys_, renderPass_, sentinelMesh,
+                     cmdPool_, graphicsQueue_, config_.width, config_.height, 2)) {
         fprintf(stderr, "[RT4D Reconstruction Stack] initialization failed; refusing RECON mode\n");
         return false;
     }

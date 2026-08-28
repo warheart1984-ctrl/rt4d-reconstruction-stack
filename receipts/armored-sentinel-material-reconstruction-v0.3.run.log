@@ -1,0 +1,6 @@
+GPU: AMD Radeon RX 480 Graphics (RADV POLARIS10)
+[SENTINEL] loaded fixtures/armored-sentinel-textured-v0.3.glb (2210 verts, 2160 idx, 5 primitives, 5/5 source-UV, 0 generated-UV, 6 declared materials, 1 decoded texture(s), 6 textured material(s), UV policy reject; center 0.000 1.065 -0.272; radius 1.160)
+[MATERIAL] staged 1 source texture(s) and one white fallback into 2 device-local image(s); 6 material descriptors
+[capture] rendering 3 frame(s) to receipts/armored-sentinel-material-reconstruction-v0.3.png ... [gpu-timer] RECON total: 4.124 ms
+[gpu-timer] RECON total: 3.957 ms
+OK

@@ -67,6 +67,7 @@ add_dependencies(mandala_rasterize compile_shaders)
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_executable(rt4d_gltf_mesh_tests
         ${SRC_DIR}/tests/gltf_mesh_test.cpp
         ${SRC_DIR}/gltf_mesh.cpp
@@ -82,6 +83,14 @@ if(BUILD_TESTING)
     endif()
     add_test(
         NAME rt4d_gltf_mesh_fixture
-        COMMAND rt4d_gltf_mesh_tests ${SRC_DIR}/armored-sentinel-v1.glb
+        COMMAND rt4d_gltf_mesh_tests
+            ${SRC_DIR}/armored-sentinel-v1.glb
+            ${SRC_DIR}/fixtures/armored-sentinel-textured-v0.3.glb
+            ${SRC_DIR}/fixtures/armored-sentinel-textured-missing-uv-v0.3.glb
+    )
+    add_test(
+        NAME rt4d_material_fixture_reproducibility
+        COMMAND ${Python3_EXECUTABLE}
+            ${SRC_DIR}/tools/generate_material_fixtures.py --check
     )
 endif()

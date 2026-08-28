@@ -1,0 +1,159 @@
+{
+  "schema": "rt4d-reconstruction-stack-receipt/0.3",
+  "status": "passed_live_material_and_temporal_gpu_capture",
+  "created_at": "2026-08-27T22:26:34-04:00",
+  "backend": "Vulkan",
+  "hardware": {
+    "adapter": "AMD Radeon RX 480 Graphics (RADV POLARIS10)",
+    "driver": "Mesa RADV 25.2.8",
+    "vulkan_api": "1.4.318"
+  },
+  "build": {
+    "command": "cmake -S . -B build-v03 -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON && cmake --build build-v03 --parallel 2",
+    "binary": "build-v03/mandala_rasterize",
+    "binary_sha256": "0130c1dc512e67160af0e5d5463816475f0d4ec43c7d59d3d29e34a6994b7bb8",
+    "compiler_warnings_as_errors": true,
+    "ctest": { "passed": 2, "failed": 0 },
+    "release_build": "passed",
+    "asan_ubsan_asset_tests": "passed"
+  },
+  "source_asset": {
+    "path": "armored-sentinel-v1.glb",
+    "sha256": "06c76ee61f1582708e50fe208939180ba9b529825052db5afd7f1d2e54e0201e",
+    "vertices": 2210,
+    "indices": 2160,
+    "primitives": 5,
+    "declared_materials": 6,
+    "material_draw_ranges": 5
+  },
+  "fixtures": {
+    "source_texture": {
+      "path": "fixtures/armored-sentinel-textured-v0.3.glb",
+      "sha256": "84a3b901e028499284b80eb6200159e23b201bc5e9d0de9e144ecb6d7f83dfea",
+      "bytes": 53056,
+      "textureOrigin": "generated_diagnostic_checker",
+      "usesSourceUv": true,
+      "textureArtistReviewed": false,
+      "uvArtistReviewed": false,
+      "materialAssignmentArtistReviewed": false
+    },
+    "missing_uv": {
+      "path": "fixtures/armored-sentinel-textured-missing-uv-v0.3.glb",
+      "sha256": "c9f02d28e86e9d99864ffb1a75dd6e812c0dea79ef0ce4bb9291909de0701e42",
+      "bytes": 52964,
+      "textureOrigin": "generated_diagnostic_checker",
+      "usesSourceUv": false,
+      "textureArtistReviewed": false,
+      "uvArtistReviewed": false,
+      "materialAssignmentArtistReviewed": false
+    },
+    "generator": {
+      "path": "tools/generate_material_fixtures.py",
+      "sha256": "05d9e9276137a0eb7777a895797552679a58a75ce2dc83fca2012a40ac36b358",
+      "reproducibility_test": "passed"
+    }
+  },
+  "materials": {
+    "classification": "geometry_based_provisional_materials",
+    "assigned_draw_ranges": 5,
+    "declared_materials": 6,
+    "base_color_factors": {
+      "skin": [0.72, 0.52, 0.42, 1.0],
+      "hair": [0.035, 0.04, 0.06, 1.0],
+      "metal_armor": [0.28, 0.30, 0.34, 1.0],
+      "leather": [0.22, 0.12, 0.08, 1.0],
+      "fabric": [0.12, 0.16, 0.28, 1.0],
+      "emissive_crest": [0.08, 0.25, 0.30, 1.0]
+    },
+    "base_color_factor_contract_test": "all_six_passed",
+    "artist_review": {
+      "status": "not_reviewed",
+      "textureArtistReviewed": false,
+      "uvArtistReviewed": false,
+      "materialAssignmentArtistReviewed": false
+    },
+    "interpretation": "Runtime material assignment, factors, and diagnostic texture sampling are proven. Artist-approved look development is not claimed."
+  },
+  "gpu_texture_upload": {
+    "source_decode": "embedded PNG to RGBA8",
+    "staging_memory": "HOST_VISIBLE|HOST_COHERENT",
+    "destination_format": "VK_FORMAT_R8G8B8A8_SRGB",
+    "destination_tiling": "VK_IMAGE_TILING_OPTIMAL",
+    "destination_memory": "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT",
+    "source_texture_images": 1,
+    "white_fallback_images": 1,
+    "material_descriptor_sets": 6
+  },
+  "uv_policy": {
+    "default": "reject_textured_primitive_without_TEXCOORD_0",
+    "default_rejection": {
+      "verified": true,
+      "exit_code": 1,
+      "capture_created": false,
+      "log": "receipts/armored-sentinel-missing-uv-rejection-v0.3.run.log"
+    },
+    "explicit_fallback": "generate-planar-labeled",
+    "fallback_algorithm": "normalize positions over each primitive's two largest bounds axes",
+    "fallback_label": "generated_planar",
+    "fallback_never_claimed_as_authored": true
+  },
+  "reconstruction": {
+    "passes_executed": [
+      "per_material_gbuffer",
+      "temporal_reprojection",
+      "confidence_denoiser",
+      "classical_2x_super_resolution",
+      "tone_map_composite"
+    ],
+    "shader_sha256": {
+      "gbuffer.vert": "064ed722acd333c9dde4a9b8e4e797abf7bec1592d23a3d80a9bda98b97ca561",
+      "gbuffer.frag": "ca29df462602a5d949c1fa57ea421f1163e469e8d54d4f4ccc8a9c9956c747d4",
+      "reprojection.comp": "6dd28a0411175a9621b88604b2a39d4fd16f439e775d73d4039cdb3545e248b2",
+      "denoiser.comp": "ea1207d2d6154ddd2948ac04c01e63100fd2493b7e6093fc6fae7274f908ea73",
+      "sr_classic.comp": "9e4c66b8dff1e9d18fc7027a284caa09b3baf5762d1fdbe33c5177755d209fe9",
+      "tone_map.frag": "14d14426e3ce2bcc842f6905daf3235ca089a36879cfd94fb094337e9c34a263"
+    }
+  },
+  "captures": {
+    "source_texture_source_uv": {
+      "path": "receipts/armored-sentinel-material-reconstruction-v0.3.png",
+      "log": "receipts/armored-sentinel-material-reconstruction-v0.3.run.log",
+      "dimensions": [1280, 720],
+      "frames": 3,
+      "sha256": "64ac7e615bc446eb1a10eea0852381da07f42ad90ec634d5506a3b9da3b1eab1",
+      "observed_post_warmup_gpu_ms": [4.124, 3.957],
+      "validation_messages_observed": 0,
+      "visual_inspection": "non-black centered Sentinel; source-UV diagnostic texture and material-factor variation visible"
+    },
+    "factor_only_white_fallback": {
+      "path": "receipts/armored-sentinel-material-factors-v0.3.png",
+      "log": "receipts/armored-sentinel-material-factors-v0.3.run.log",
+      "dimensions": [1280, 720],
+      "frames": 3,
+      "sha256": "9428a3c4b3fc1a01bc820ff99513f0d53e44aed0fd0bae515deeeaa6a12eb991",
+      "observed_post_warmup_gpu_ms": [0.819, 0.812],
+      "validation_messages_observed": 0,
+      "visual_inspection": "non-black centered Sentinel; per-material base-color-factor variation visible without a source image"
+    },
+    "generated_planar_fallback": {
+      "path": "receipts/armored-sentinel-generated-planar-fallback-v0.3.png",
+      "log": "receipts/armored-sentinel-generated-planar-fallback-v0.3.run.log",
+      "dimensions": [1280, 720],
+      "frames": 2,
+      "sha256": "0a976cb5b748ec3a2e6dee2d46cdd18dc63760ff1a6a8261da218e8abba0a8fe",
+      "source_uv_primitives": 0,
+      "generated_uv_primitives": 5,
+      "observed_post_warmup_gpu_ms": [0.839],
+      "validation_messages_observed": 0,
+      "visual_inspection": "non-black centered Sentinel; planar diagnostic projection visibly differs from source-UV capture"
+    }
+  },
+  "limitations": [
+    "The texture is deterministic generated fixture data, not artist-authored art.",
+    "Geometry, UVs, texture, and material assignments have not received artist review.",
+    "Metallic/roughness are preserved by the loader but not evaluated by the GPU material shader.",
+    "Alpha modes, mip chains, normal, emissive, occlusion, texture transforms, nonzero texture-coordinate sets, data URIs, KTX/Basis, and source sampler fidelity are unsupported.",
+    "The static captures prove execution and history lifecycle, not motion quality or a statistically meaningful performance benchmark.",
+    "ML super-resolution, frame generation, and NVIDIA DLSS are not claimed."
+  ]
+}

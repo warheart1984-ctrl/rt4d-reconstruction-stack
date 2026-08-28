@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 // ---- small local helpers -------------------------------------------------
@@ -217,11 +218,18 @@ bool DLSS45Recon::createMeshResources() {
     w[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; w[1].pBufferInfo = &scInfo;
     vkUpdateDescriptorSets(device_, 2, w, 0, nullptr);
 
-    // Mesh pipeline layout (single descriptor set).
+    // Mesh pipeline layout: set 0 = camera/scene, set 1 = material texture.
+    VkDescriptorSetLayout pipelineLayouts[2] = {meshSetLayout_, materialSetLayout_};
+    VkPushConstantRange materialPush{};
+    materialPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    materialPush.offset = 0;
+    materialPush.size = sizeof(float) * 4;
     VkPipelineLayoutCreateInfo pl{};
     pl.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pl.setLayoutCount = 1;
-    pl.pSetLayouts = layouts;
+    pl.setLayoutCount = 2;
+    pl.pSetLayouts = pipelineLayouts;
+    pl.pushConstantRangeCount = 1;
+    pl.pPushConstantRanges = &materialPush;
     if (vkCreatePipelineLayout(device_, &pl, nullptr, &meshLayout_) != VK_SUCCESS) return false;
 
     // Pipeline.
@@ -313,13 +321,13 @@ bool DLSS45Recon::createMeshResources() {
 bool DLSS45Recon::createDescriptors() {
     // Pool big enough for all sets + descriptors.
     std::array<VkDescriptorPoolSize, 4> sizes{};
-    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[0].descriptorCount = 24;
+    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[0].descriptorCount = 128;
     sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;           sizes[1].descriptorCount = 8;
     sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;          sizes[2].descriptorCount = 4;
     sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;          sizes[3].descriptorCount = 4;
     VkDescriptorPoolCreateInfo pci{};
     pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets = 8;
+    pci.maxSets = 128;
     pci.poolSizeCount = (uint32_t)sizes.size();
     pci.pPoolSizes = sizes.data();
     if (vkCreateDescriptorPool(device_, &pci, nullptr, &pool_) != VK_SUCCESS) return false;
@@ -493,8 +501,212 @@ static void transitionLayout(VkCommandBuffer cmd, VkImage image, VkImageAspectFl
     vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &bar);
 }
 
+bool DLSS45Recon::uploadBaseColorTexture(ImageObj& image, const uint8_t* rgba,
+                                         uint32_t width, uint32_t height,
+                                         VkCommandPool uploadPool, VkQueue uploadQueue) {
+    if (!rgba || width == 0 || height == 0 ||
+        width > std::numeric_limits<uint32_t>::max() / 4 / height)
+        return false;
+    const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4;
+
+    if (!createImage(image, width, height, VK_FORMAT_R8G8B8A8_SRGB,
+                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT))
+        return false;
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    auto cleanup = [&]() {
+        if (cmd) vkFreeCommandBuffers(device_, uploadPool, 1, &cmd);
+        if (stagingMemory) vkFreeMemory(device_, stagingMemory, nullptr);
+        if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    };
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = byteSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &bufferInfo, nullptr, &staging) != VK_SUCCESS)
+        return false;
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_, staging, &requirements);
+    const uint32_t memoryType = findMemType(
+        phys_, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (memoryType == ~0u) {
+        cleanup();
+        return false;
+    }
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(device_, &allocation, nullptr, &stagingMemory) != VK_SUCCESS ||
+        vkBindBufferMemory(device_, staging, stagingMemory, 0) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, stagingMemory, 0, byteSize, 0, &mapped) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    std::memcpy(mapped, rgba, static_cast<size_t>(byteSize));
+    vkUnmapMemory(device_, stagingMemory);
+
+    VkCommandBufferAllocateInfo commandAllocation{};
+    commandAllocation.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandAllocation.commandPool = uploadPool;
+    commandAllocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandAllocation.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(device_, &commandAllocation, &cmd) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    transitionLayout(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent = {width, height, 1};
+    vkCmdCopyBufferToImage(cmd, staging, image.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    transitionLayout(cmd, image.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd;
+    if (vkQueueSubmit(uploadQueue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
+        vkQueueWaitIdle(uploadQueue) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    cleanup();
+    ++deviceLocalTextureCount_;
+    return true;
+}
+
+bool DLSS45Recon::createMaterialResources(const GLTFMeshScene& mesh,
+                                          VkCommandPool uploadPool,
+                                          VkQueue uploadQueue) {
+    if (mesh.materials().size() > 64) {
+        fprintf(stderr, "[MATERIAL] at most 64 materials are supported\n");
+        return false;
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.maxLod = 0.0f;
+    if (vkCreateSampler(device_, &samplerInfo, nullptr, &materialSampler_) != VK_SUCCESS)
+        return false;
+
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    if (vkCreateDescriptorSetLayout(device_, &layoutInfo, nullptr,
+                                    &materialSetLayout_) != VK_SUCCESS)
+        return false;
+
+    const uint8_t white[4] = {255, 255, 255, 255};
+    if (!uploadBaseColorTexture(fallbackWhiteTexture_, white, 1, 1,
+                                uploadPool, uploadQueue))
+        return false;
+
+    baseColorTextures_.resize(mesh.textures().size());
+    for (size_t i = 0; i < mesh.textures().size(); ++i) {
+        const GLTFTextureData& texture = mesh.textures()[i];
+        if (!texture.decoded()) continue;
+        if (!uploadBaseColorTexture(baseColorTextures_[i], texture.rgba.data(),
+                                    texture.width, texture.height,
+                                    uploadPool, uploadQueue))
+            return false;
+        ++sourceTextureUploadCount_;
+    }
+
+    materialSets_.resize(mesh.materials().size() + 1);
+    std::vector<VkDescriptorSetLayout> layouts(materialSets_.size(), materialSetLayout_);
+    VkDescriptorSetAllocateInfo allocationInfo{};
+    allocationInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocationInfo.descriptorPool = pool_;
+    allocationInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+    allocationInfo.pSetLayouts = layouts.data();
+    if (vkAllocateDescriptorSets(device_, &allocationInfo,
+                                 materialSets_.data()) != VK_SUCCESS)
+        return false;
+
+    for (size_t setIndex = 0; setIndex < materialSets_.size(); ++setIndex) {
+        VkImageView view = fallbackWhiteTexture_.view;
+        if (setIndex > 0) {
+            const GLTFMaterialData& material = mesh.materials()[setIndex - 1];
+            if (material.baseColorTextureIndex >= 0) {
+                const size_t textureIndex =
+                    static_cast<size_t>(material.baseColorTextureIndex);
+                if (textureIndex >= baseColorTextures_.size() ||
+                    !baseColorTextures_[textureIndex].view)
+                    return false;
+                view = baseColorTextures_[textureIndex].view;
+            }
+        }
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.sampler = materialSampler_;
+        imageInfo.imageView = view;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = materialSets_[setIndex];
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+
+    fprintf(stderr,
+            "[MATERIAL] staged %u source texture(s) and one white fallback into "
+            "%u device-local image(s); %zu material descriptors\n",
+            sourceTextureUploadCount_, deviceLocalTextureCount_, mesh.materials().size());
+    return true;
+}
+
 bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
                        VkRenderPass rendererRenderPass,
+                       const GLTFMeshScene& mesh,
+                       VkCommandPool uploadPool, VkQueue uploadQueue,
                        uint32_t displayW, uint32_t displayH, uint32_t lrScale) {
     device_ = device;
     phys_ = phys;
@@ -538,6 +750,8 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
 
     if (!createRenderPass()) return false;
     if (!createDescriptors()) return false;
+
+    if (!createMaterialResources(mesh, uploadPool, uploadQueue)) return false;
 
     // Mesh pipeline (needs pool from createDescriptors for its descriptor set).
     if (!createMeshResources()) return false;
@@ -773,7 +987,27 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &off);
         vkCmdBindIndexBuffer(cmd, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, mesh.indexCount(), 1, 0, 0, 0);
+        for (const GLTFPrimitiveRange& primitive : mesh.primitives()) {
+            size_t materialSetIndex = 0;
+            float baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+            if (primitive.materialIndex >= 0 &&
+                static_cast<size_t>(primitive.materialIndex) < mesh.materials().size()) {
+                const size_t materialIndex =
+                    static_cast<size_t>(primitive.materialIndex);
+                materialSetIndex = materialIndex + 1;
+                std::memcpy(baseColorFactor,
+                            mesh.materials()[materialIndex].baseColorFactor,
+                            sizeof(baseColorFactor));
+            }
+            if (materialSetIndex >= materialSets_.size()) continue;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    meshLayout_, 1, 1,
+                                    &materialSets_[materialSetIndex], 0, nullptr);
+            vkCmdPushConstants(cmd, meshLayout_, VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(baseColorFactor), baseColorFactor);
+            vkCmdDrawIndexed(cmd, primitive.indexCount, 1,
+                             primitive.firstIndex, 0, 0);
+        }
     }
     vkCmdEndRenderPass(cmd);
 
@@ -902,18 +1136,32 @@ void DLSS45Recon::shutdown(VkDevice device) {
         if (i->image) vkDestroyImage(device, i->image, nullptr);
         if (i->memory) vkFreeMemory(device, i->memory, nullptr);
     }
+    auto destroyImage = [&](ImageObj& image) {
+        if (image.view) vkDestroyImageView(device, image.view, nullptr);
+        if (image.image) vkDestroyImage(device, image.image, nullptr);
+        if (image.memory) vkFreeMemory(device, image.memory, nullptr);
+        image = {};
+    };
+    destroyImage(fallbackWhiteTexture_);
+    for (auto& texture : baseColorTextures_) destroyImage(texture);
     if (sampler_) vkDestroySampler(device, sampler_, nullptr);
+    if (materialSampler_) vkDestroySampler(device, materialSampler_, nullptr);
     if (pool_) vkDestroyDescriptorPool(device, pool_, nullptr);
     if (reprojSetLayout_) vkDestroyDescriptorSetLayout(device, reprojSetLayout_, nullptr);
     if (denoiserSetLayout_) vkDestroyDescriptorSetLayout(device, denoiserSetLayout_, nullptr);
     if (srSetLayout_) vkDestroyDescriptorSetLayout(device, srSetLayout_, nullptr);
     if (toneMapSetLayout_) vkDestroyDescriptorSetLayout(device, toneMapSetLayout_, nullptr);
     if (meshSetLayout_) vkDestroyDescriptorSetLayout(device, meshSetLayout_, nullptr);
+    if (materialSetLayout_) vkDestroyDescriptorSetLayout(device, materialSetLayout_, nullptr);
 
     if (camUBO_) vkDestroyBuffer(device, camUBO_, nullptr);
     if (camUBOMem_) vkFreeMemory(device, camUBOMem_, nullptr);
     if (sceneUBO_) vkDestroyBuffer(device, sceneUBO_, nullptr);
     if (sceneUBOMem_) vkFreeMemory(device, sceneUBOMem_, nullptr);
 
+    baseColorTextures_.clear();
+    materialSets_.clear();
+    deviceLocalTextureCount_ = 0;
+    sourceTextureUploadCount_ = 0;
     device_ = VK_NULL_HANDLE;
 }
