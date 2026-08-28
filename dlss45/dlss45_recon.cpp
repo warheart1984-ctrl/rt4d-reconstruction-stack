@@ -88,7 +88,7 @@ void DLSS45Recon::matMul(float* out, const float* a, const float* b) {
         }
 }
 
-bool DLSS45Recon::createRenderPass(VkFormat swapchainFormat) {
+bool DLSS45Recon::createRenderPass() {
     std::array<VkAttachmentDescription, 6> atts{};
     VkFormat colorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     for (int i = 0; i < 5; i++) {
@@ -237,10 +237,11 @@ bool DLSS45Recon::createMeshResources() {
 
     VkVertexInputBindingDescription vi{};
     vi.binding = 0; vi.stride = sizeof(GLTFMeshVertex); vi.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    std::array<VkVertexInputAttributeDescription, 3> attrs{};
+    std::array<VkVertexInputAttributeDescription, 4> attrs{};
     attrs[0].location = 0; attrs[0].binding = 0; attrs[0].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[0].offset = 0;
     attrs[1].location = 1; attrs[1].binding = 0; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = 12;
     attrs[2].location = 2; attrs[2].binding = 0; attrs[2].format = VK_FORMAT_R32G32_SFLOAT; attrs[2].offset = 24;
+    attrs[3].location = 3; attrs[3].binding = 0; attrs[3].format = VK_FORMAT_R32_SFLOAT; attrs[3].offset = 32;
 
     VkPipelineVertexInputStateCreateInfo pvi{};
     pvi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -418,7 +419,7 @@ bool DLSS45Recon::createDescriptors() {
         info[4] = cis(noise_.view);      // V_t
         info[5] = cis(reprojColor_.view); // history/reprojected color
         info[6] = cis(depthHistory_.view);
-        info[7] = cis(normals_.view);    // history normals (reuse current for now)
+        info[7] = cis(normalHistory_.view);
         info[8] = cis(material_.view);   // material id
         info[9] = sto(denoised_.view);
         info[10] = sto(denoiseConf_.view);
@@ -493,7 +494,7 @@ static void transitionLayout(VkCommandBuffer cmd, VkImage image, VkImageAspectFl
 }
 
 bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
-                       VkRenderPass rendererRenderPass, VkFormat swapchainFormat,
+                       VkRenderPass rendererRenderPass,
                        uint32_t displayW, uint32_t displayH, uint32_t lrScale) {
     device_ = device;
     phys_ = phys;
@@ -504,20 +505,24 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
 
     // G-buffer images (LR). All but depth are color/sampled + storage targets.
     VkImageUsageFlags colorUsage =
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (!createImage(colorLDR_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, colorUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(normals_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, colorUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(motion_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, colorUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(material_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, colorUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(noise_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, colorUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(depth_, lrW_, lrH_, VK_FORMAT_D32_SFLOAT,
-                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
+                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
 
     // History (LR).
     if (!createImage(colorHistory_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(depthHistory_, lrW_, lrH_, VK_FORMAT_D32_SFLOAT,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
+    if (!createImage(normalHistory_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
 
     // Reconstruction (LR) storage targets.
     VkImageUsageFlags storUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -531,7 +536,7 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
     if (!createImage(depthHR_, hrW_, hrH_, VK_FORMAT_R32_SFLOAT, storUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(motionHR_, hrW_, hrH_, VK_FORMAT_R16G16B16A16_SFLOAT, storUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
 
-    if (!createRenderPass(swapchainFormat)) return false;
+    if (!createRenderPass()) return false;
     if (!createDescriptors()) return false;
 
     // Mesh pipeline (needs pool from createDescriptors for its descriptor set).
@@ -548,6 +553,144 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
     return true;
 }
 
+void DLSS45Recon::initializeHistory(VkCommandBuffer cmd) {
+    transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+    transitionLayout(cmd, normalHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+
+    VkImageSubresourceRange colorRange{};
+    colorRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorRange.levelCount = 1;
+    colorRange.layerCount = 1;
+    const VkClearColorValue clearColor = {{0.0f, 0.0f, 0.0f, 0.0f}};
+    vkCmdClearColorImage(cmd, colorHistory_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         &clearColor, 1, &colorRange);
+    const VkClearColorValue clearNormal = {{0.5f, 0.5f, 1.0f, 1.0f}};
+    vkCmdClearColorImage(cmd, normalHistory_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         &clearNormal, 1, &colorRange);
+
+    VkImageSubresourceRange depthRange{};
+    depthRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthRange.levelCount = 1;
+    depthRange.layerCount = 1;
+    const VkClearDepthStencilValue clearDepth{1.0f, 0};
+    vkCmdClearDepthStencilImage(cmd, depthHistory_.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                &clearDepth, 1, &depthRange);
+
+    transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, normalHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+}
+
+void DLSS45Recon::updateHistory(VkCommandBuffer cmd) {
+    transitionLayout(cmd, colorLDR_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    transitionLayout(cmd, depth_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    transitionLayout(cmd, normals_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    transitionLayout(cmd, normalHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+
+    VkImageCopy colorCopy{};
+    colorCopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorCopy.srcSubresource.layerCount = 1;
+    colorCopy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorCopy.dstSubresource.layerCount = 1;
+    colorCopy.extent = {lrW_, lrH_, 1};
+    vkCmdCopyImage(cmd, colorLDR_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   colorHistory_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1, &colorCopy);
+
+    VkImageCopy depthCopy{};
+    depthCopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthCopy.srcSubresource.layerCount = 1;
+    depthCopy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthCopy.dstSubresource.layerCount = 1;
+    depthCopy.extent = {lrW_, lrH_, 1};
+    vkCmdCopyImage(cmd, depth_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   depthHistory_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1, &depthCopy);
+    vkCmdCopyImage(cmd, normals_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   normalHistory_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1, &colorCopy);
+
+    transitionLayout(cmd, colorLDR_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, depth_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, normals_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    transitionLayout(cmd, normalHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+}
+
 // ---- render ----------------------------------------------------------------
 
 void DLSS45Recon::render(VkCommandBuffer cmd,
@@ -557,19 +700,14 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          uint32_t swapIndex, VkFramebuffer swapFramebuffer,
                          uint32_t displayW, uint32_t displayH) {
     (void)swapIndex;
-    // First frame: transition history + storage images out of UNDEFINED.
+    // First frame: transition storage images out of UNDEFINED. History is
+    // explicitly cleared below, rejected by the temporal shaders for frame 0,
+    // and populated from the current G-buffer at the end of every frame.
     // NOTE: firstFrame_ stays true through the ENTIRE first render so the
     // "back-to-GENERAL" transitions below (which assume prior SHADER_READ_ONLY)
     // do NOT fire on frame 0. It is cleared at the end of render().
     if (firstFrame_) {
         VkPipelineStageFlags all = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        // History (read-only samplers).
-        transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
-                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_ACCESS_SHADER_READ_BIT);
-        transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
-                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_ACCESS_SHADER_READ_BIT);
         // Storage images -> GENERAL.
         transitionLayout(cmd, reprojColor_.image, VK_IMAGE_ASPECT_COLOR_BIT,
                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
@@ -648,6 +786,8 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_ACCESS_SHADER_READ_BIT);
 
+    if (firstFrame_) initializeHistory(cmd);
+
     // ---- 2) Temporal reprojection ----
     // (reads G-buffer + history as SHADER_READ_ONLY; writes reproj as storage GENERAL)
     // Ensure reproj outputs are GENERAL for writing (non-first frames end them SHADER_READ_ONLY).
@@ -661,7 +801,7 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
     }
-    reproj_.record(cmd, reprojSet_, lrW_, lrH_);
+    reproj_.record(cmd, reprojSet_, lrW_, lrH_, !firstFrame_);
 
     // Transition reproj storage outputs GENERAL -> SHADER_READ_ONLY for denoiser sampling.
     transitionLayout(cmd, reprojColor_.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -685,7 +825,7 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
     }
-    denoiser_.record(cmd, denoiserSet_, lrW_, lrH_);
+    denoiser_.record(cmd, denoiserSet_, lrW_, lrH_, !firstFrame_);
 
     // Transition denoiser storage outputs GENERAL -> SHADER_READ_ONLY for SR sampling.
     transitionLayout(cmd, denoised_.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -728,6 +868,11 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
     // ---- 5) Tone-map composite (HR -> swapchain) ----
     toneMap_.record(cmd, toneMapSet_, swapFramebuffer, displayW, displayH);
 
+    // Persist this frame's low-resolution color/depth as the only history
+    // consumed by the next frame. This makes temporal state explicit rather
+    // than sampling never-written images.
+    updateHistory(cmd);
+
     // Store current viewProj as prev for next frame (motion).
     memcpy(prevViewProj_, cam.viewProj, sizeof(float) * 16);
     firstFrame_ = false;
@@ -750,7 +895,7 @@ void DLSS45Recon::shutdown(VkDevice device) {
     compositePass_ = VK_NULL_HANDLE;
 
     for (auto* i : {&colorLDR_, &depth_, &normals_, &motion_, &material_, &noise_,
-                    &colorHistory_, &depthHistory_,
+                    &colorHistory_, &depthHistory_, &normalHistory_,
                     &reprojColor_, &reprojConf_, &denoised_, &denoiseConf_,
                     &colorSR_, &depthHR_, &motionHR_}) {
         if (i->view) vkDestroyImageView(device, i->view, nullptr);

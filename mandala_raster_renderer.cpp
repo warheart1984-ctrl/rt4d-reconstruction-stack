@@ -6,8 +6,15 @@
 #include <sstream>
 #include <iomanip>
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include <unistd.h>
 
 static uint32_t findMemType(VkPhysicalDevice phys, uint32_t bits,
@@ -180,7 +187,7 @@ bool MandalaRasterRenderer::uploadLivingMapBuffers() {
     nodeBuffer_ = pipeline_.allocBuffer(nodeSz,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    pipeline_.uploadToBuffer(device_, nodeBuffer_, livingMap.nodes().data(), nodeSz);
+    pipeline_.uploadToBuffer(nodeBuffer_, livingMap.nodes().data(), nodeSz);
 
     std::vector<LivingMapEdge> gpuEdges;
     gpuEdges.reserve(livingMap.edgeCount());
@@ -199,7 +206,7 @@ bool MandalaRasterRenderer::uploadLivingMapBuffers() {
         edgeBuffer_ = pipeline_.allocBuffer(edgeSz,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        pipeline_.uploadToBuffer(device_, edgeBuffer_, gpuEdges.data(), edgeSz);
+        pipeline_.uploadToBuffer(edgeBuffer_, gpuEdges.data(), edgeSz);
     }
     return true;
 }
@@ -219,13 +226,13 @@ void MandalaRasterRenderer::updateCamera(float aspect) {
     }
 }
 
-void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
-                                                  uint32_t swapIndex) {
+bool MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
+                                                 uint32_t swapIndex) {
     VkCommandBuffer cmd = frame.cmd;
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) return false;
 
     if (debugGpuTimer_) {
         gpuTimer_.resetPoolInCmd(cmd);
@@ -244,8 +251,7 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
                           ext.width, ext.height);
         }
         if (debugGpuTimer_) gpuTimer_.write(cmd, 1);  // recon done
-        vkEndCommandBuffer(cmd);
-        return;
+        return vkEndCommandBuffer(cmd) == VK_SUCCESS;
     }
 
     if (debugGpuTimer_) gpuTimer_.write(cmd, 0);  // frame start
@@ -263,8 +269,8 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
     cam.resolution[0] = (float)ext.width;
     cam.resolution[1] = (float)ext.height;
     cam.time = time_;
-    pipeline_.uploadToBuffer(device_, pipeline_.cameraUBO(), &cam, sizeof(CameraUBO));
-    pipeline_.bindCamera(cmd, pipeline_.cameraUBO());
+    pipeline_.uploadToBuffer(pipeline_.cameraUBO(), &cam, sizeof(CameraUBO));
+    pipeline_.bindCamera(cmd);
 
     CelParams cel{};
     cel.baseColor[0] = 0.95f; cel.baseColor[1] = 0.85f; cel.baseColor[2] = 0.78f;
@@ -277,7 +283,7 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
     cel.blushColor[0] = 1.0f; cel.blushColor[1] = 0.3f; cel.blushColor[2] = 0.25f;
     cel.specularIntensity = 0.4f;
     cel.specularSize = 0.15f;
-    pipeline_.uploadToBuffer(device_, pipeline_.celUBO(), &cel, sizeof(CelParams));
+    pipeline_.uploadToBuffer(pipeline_.celUBO(), &cel, sizeof(CelParams));
 
     switch (config_.scene) {
         case RenderScene::LIVING_MAP:
@@ -306,7 +312,7 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
                 sc.lampPos[0] = 3.0f; sc.lampPos[1] = 2.0f; sc.lampPos[2] = 1.0f;
                 sc.skyColor[0] = 0.4f; sc.skyColor[1] = 0.6f; sc.skyColor[2] = 0.9f;
                 sc.lampColor[0] = 1.0f; sc.lampColor[1] = 0.85f; sc.lampColor[2] = 0.6f;
-                pipeline_.uploadToBuffer(device_, pipeline_.meshSceneUBO(), &sc, sizeof(SceneUBO));
+                pipeline_.uploadToBuffer(pipeline_.meshSceneUBO(), &sc, sizeof(SceneUBO));
                 pipeline_.drawTacoScene(cmd, sentinelVertexBuffer_.buffer,
                                         sentinelIndexBuffer_.buffer, sentinelMesh.indexCount());
             }
@@ -326,7 +332,7 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
                 sc.lampPos[0] = 3.0f; sc.lampPos[1] = 2.0f; sc.lampPos[2] = 1.0f;
                 sc.skyColor[0] = 0.4f; sc.skyColor[1] = 0.6f; sc.skyColor[2] = 0.9f;
                 sc.lampColor[0] = 1.0f; sc.lampColor[1] = 0.85f; sc.lampColor[2] = 0.6f;
-                pipeline_.uploadToBuffer(device_, pipeline_.meshSceneUBO(), &sc, sizeof(SceneUBO));
+                pipeline_.uploadToBuffer(pipeline_.meshSceneUBO(), &sc, sizeof(SceneUBO));
                 pipeline_.drawDragonHatch(cmd, sentinelVertexBuffer_.buffer,
                                           sentinelIndexBuffer_.buffer, sentinelMesh.indexCount());
             }
@@ -341,10 +347,14 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
                 s.lampPos[0] = 3.0f; s.lampPos[1] = 2.0f; s.lampPos[2] = 1.0f;
                 s.skyColor[0] = 0.4f; s.skyColor[1] = 0.6f; s.skyColor[2] = 0.9f;
                 s.lampColor[0] = 1.0f; s.lampColor[1] = 0.85f; s.lampColor[2] = 0.6f;
-                pipeline_.drawMeshScene(cmd, pipeline_.cameraUBO(), pipeline_.meshSceneUBO(),
+                pipeline_.drawMeshScene(cmd, pipeline_.meshSceneUBO(),
                                         s, sentinelVertexBuffer_.buffer,
                                         sentinelIndexBuffer_.buffer, sentinelMesh.indexCount());
             }
+            break;
+
+        case RenderScene::RECON:
+            // The reconstruction path returns before this raster-only switch.
             break;
     }
 
@@ -359,7 +369,7 @@ void MandalaRasterRenderer::recordCommandBuffer(FrameResources& frame,
 
     if (debugGpuTimer_) gpuTimer_.write(cmd, 4);  // after end render pass
 
-    vkEndCommandBuffer(cmd);
+    return vkEndCommandBuffer(cmd) == VK_SUCCESS;
 }
 
 bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
@@ -397,8 +407,6 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
     if (!createFramebuffers()) return false;
     if (!createFrameResources()) return false;
 
-    vbm_.init(device, phys);
-
     if (!pipeline_.init(device, phys, renderPass_, cfg.width, cfg.height))
         return false;
 
@@ -415,8 +423,11 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
     };
     for (auto* p : sentinelCandidates) {
         if (sentinelMesh.load(p)) {
-            fprintf(stderr, "[SENTINEL] loaded %s (%u verts, %u idx; center %.3f %.3f %.3f; radius %.3f)\n",
+            fprintf(stderr, "[SENTINEL] loaded %s (%u verts, %u idx, %u primitives, "
+                            "%u/%u source-UV, %u declared material slots; center %.3f %.3f %.3f; radius %.3f)\n",
                     p, sentinelMesh.vertexCount(), sentinelMesh.indexCount(),
+                    sentinelMesh.primitiveCount(), sentinelMesh.sourceUvPrimitiveCount(),
+                    sentinelMesh.primitiveCount(), sentinelMesh.materialCount(),
                     sentinelMesh.center[0], sentinelMesh.center[1], sentinelMesh.center[2],
                     sentinelMesh.radius);
             break;
@@ -428,21 +439,21 @@ bool MandalaRasterRenderer::init(VkInstance instance, VkPhysicalDevice phys,
         VkDeviceSize vsz = sentinelMesh.vertexCount() * sizeof(GLTFMeshVertex);
         sentinelVertexBuffer_ = pipeline_.allocBuffer(vsz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        pipeline_.uploadToBuffer(device_, sentinelVertexBuffer_,
+        pipeline_.uploadToBuffer(sentinelVertexBuffer_,
                                  sentinelMesh.vertices().data(), vsz);
 
         VkDeviceSize isz = sentinelMesh.indexCount() * sizeof(uint32_t);
         if (isz > 0) {
             sentinelIndexBuffer_ = pipeline_.allocBuffer(isz, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            pipeline_.uploadToBuffer(device_, sentinelIndexBuffer_,
+            pipeline_.uploadToBuffer(sentinelIndexBuffer_,
                                      sentinelMesh.indices().data(), isz);
         }
         sentinelLoaded_ = true;
     }
 
-    if (!dlss45.init(device_, phys_, renderPass_, swapchain_.colorFormat(),
-                     config_.width, config_.height, 2)) {
+    if (!dlss45.init(device_, phys_, renderPass_, config_.width,
+                     config_.height, 2)) {
         fprintf(stderr, "[RT4D Reconstruction Stack] initialization failed; refusing RECON mode\n");
         return false;
     }
@@ -508,37 +519,6 @@ void MandalaRasterRenderer::shutdown() {
     swapchain_.shutdown(device_);
 }
 
-void MandalaRasterRenderer::resize(uint32_t w, uint32_t h) {
-    if (w == 0 || h == 0) return;
-    vkDeviceWaitIdle(device_);
-
-    for (auto fb : framebuffers_) if (fb) vkDestroyFramebuffer(device_, fb, nullptr);
-    for (auto dv : depthViews_) if (dv) vkDestroyImageView(device_, dv, nullptr);
-    for (auto dm : depthMemorys_) if (dm) vkFreeMemory(device_, dm, nullptr);
-    for (auto di : depthImages_) if (di) vkDestroyImage(device_, di, nullptr);
-    framebuffers_.clear();
-    depthViews_.clear();
-    depthMemorys_.clear();
-    depthImages_.clear();
-
-    if (renderPass_) {
-        vkDestroyRenderPass(device_, renderPass_, nullptr);
-        renderPass_ = VK_NULL_HANDLE;
-    }
-
-    config_.width = w;
-    config_.height = h;
-
-    VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_, VK_NULL_HANDLE, &caps);
-    uint32_t w2 = std::clamp(w, caps.minImageExtent.width, caps.maxImageExtent.width);
-    uint32_t h2 = std::clamp(h, caps.minImageExtent.height, caps.maxImageExtent.height);
-    swapchain_.recreate(device_, w2, h2);
-
-    createRenderPass();
-    createFramebuffers();
-}
-
 bool MandalaRasterRenderer::renderFrame(float deltaTime) {
     time_ += deltaTime;
     livingMap.updateTime(deltaTime);
@@ -548,7 +528,7 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
 
     // Read GPU timestamps from PREVIOUS frame (uses previous frame's query pool)
     int prevPool = 1 - gpuTimer_.currentPool;
-    if (debugGpuTimer_ && currentFrame_ > 0) {
+    if (debugGpuTimer_ && renderedFrameCount_ > 0) {
         if (config_.scene == RenderScene::RECON) {
             double frameMs = gpuTimer_.getMs(0, 1, prevPool);
             fprintf(stderr, "[gpu-timer] RECON total: %.3f ms\n", frameMs);
@@ -564,22 +544,34 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
         }
     }
 
-    // Skip fence wait for first frame (fence is initially unsignaled)
-    if (currentFrame_ > 0) {
-        vkWaitForFences(device_, 1, &frame.fence, VK_TRUE, UINT64_MAX);
+    if (frame.inFlight) {
+        if (vkWaitForFences(device_, 1, &frame.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+            fprintf(stderr, "[VULKAN] fence wait failed\n");
+            return false;
+        }
     }
 
-    uint32_t swapIndex = swapchain_.acquireNextImage(device_, frame.imageAcquired);
+    uint32_t swapIndex = 0;
+    const VkResult acquireResult =
+        swapchain_.acquireNextImage(device_, frame.imageAcquired, swapIndex);
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR) {
+        fprintf(stderr, "[VULKAN] swapchain image acquisition failed (%d)\n",
+                static_cast<int>(acquireResult));
+        return false;
+    }
     lastSwapIndex_ = swapIndex;
 
-    vkResetFences(device_, 1, &frame.fence);
-    vkResetCommandBuffer(frame.cmd, 0);
-
-    // Switch to next frame's query pool
-    gpuTimer_.nextFrame();
+    if (vkResetFences(device_, 1, &frame.fence) != VK_SUCCESS ||
+        vkResetCommandBuffer(frame.cmd, 0) != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] frame resource reset failed\n");
+        return false;
+    }
 
     updateCamera((float)config_.width / config_.height);
-    recordCommandBuffer(frame, swapIndex);
+    if (!recordCommandBuffer(frame, swapIndex)) {
+        fprintf(stderr, "[VULKAN] command buffer recording failed\n");
+        return false;
+    }
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si{};
@@ -592,8 +584,19 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &frame.renderFinished;
     VkResult subRes = vkQueueSubmit(graphicsQueue_, 1, &si, frame.fence);
+    if (subRes != VK_SUCCESS) {
+        fprintf(stderr, "[VULKAN] queue submission failed (%d)\n", static_cast<int>(subRes));
+        return false;
+    }
+    frame.inFlight = true;
 
     VkResult presRes = swapchain_.present(presentQueue_, swapIndex, frame.renderFinished);
+    if (presRes != VK_SUCCESS && presRes != VK_SUBOPTIMAL_KHR) {
+        fprintf(stderr, "[VULKAN] presentation failed (%d)\n", static_cast<int>(presRes));
+        return false;
+    }
+
+    if (debugGpuTimer_) gpuTimer_.nextFrame();
 
     static int frameCount = 0;
     frameCount++;
@@ -603,6 +606,7 @@ bool MandalaRasterRenderer::renderFrame(float deltaTime) {
     }
 
     currentFrame_ = (currentFrame_ + 1) % 2;
+    ++renderedFrameCount_;
     return true;
 }
 
@@ -757,19 +761,13 @@ void MandalaRasterRenderer::setScene(RenderScene scene) {
     config_.scene = scene;
 }
 
-void MandalaRasterRenderer::setDebugFlags(bool gpuTimer, bool dumpGBuffer,
-                                          int visualizer, const std::string& captureSeqDir,
-                                          const std::string& encodePath) {
+void MandalaRasterRenderer::setDebugFlags(bool gpuTimer) {
     debugGpuTimer_ = gpuTimer;
-    debugDumpGBuffer_ = dumpGBuffer;
-    debugVisualizer_ = visualizer;
-    debugCaptureSeqDir_ = captureSeqDir;
-    // encodePath is handled in main.cpp via the ffmpeg pipe
-    (void)encodePath;
 }
 
 void MandalaRasterRenderer::dumpImage(VkImage image, VkFormat format, uint32_t w, uint32_t h,
                                       const std::string& path) {
+    (void)format;
     // Create staging buffer
     VkDeviceSize bufferSize = (VkDeviceSize)w * h * 4;
     VkBufferCreateInfo bi{};
@@ -908,18 +906,4 @@ void MandalaRasterRenderer::dumpImage(VkImage image, VkFormat format, uint32_t w
     vkFreeCommandBuffers(device_, cmdPool_, 1, &cmd);
     vkFreeMemory(device_, stagingMem, nullptr);
     vkDestroyBuffer(device_, stagingBuf, nullptr);
-}
-
-void MandalaRasterRenderer::dumpGBuffer(const std::string& dir) {
-    if (config_.scene != RenderScene::RECON) return;
-
-    VkExtent2D ext = swapchain_.extent();
-    uint32_t w = ext.width / 2;   // LR resolution
-    uint32_t h = ext.height / 2;
-
-    // Access RT4D Reconstruction Stack internal images (these are private, so we need accessors)
-    // For now dump what we can access via the swapchain extent
-    // The actual G-buffer images are in dlss45 - we'd need public accessors
-    // Dump the LR G-buffer attachments we can reach
-    fprintf(stderr, "[dump-gbuffer] G-buffer dump not fully hooked (RT4D Reconstruction Stack images private)\n");
 }

@@ -121,8 +121,7 @@ public:
     AllocatedBuffer allocBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                                  VkMemoryPropertyFlags props);
     void freeBuffer(VkDevice device, AllocatedBuffer& buf);
-    void uploadToBuffer(VkDevice device, AllocatedBuffer& buf,
-                        const void* data, VkDeviceSize size);
+    void uploadToBuffer(AllocatedBuffer& buf, const void* data, VkDeviceSize size);
 
     void beginRenderPass(VkCommandBuffer cmd, VkFramebuffer fb,
                           uint32_t w, uint32_t h);
@@ -134,11 +133,11 @@ public:
     VkPipeline pipeline(RasterMode m) { return pipelines_[static_cast<int>(m)]; }
     void advanceFrame() { frameIndex_ = (frameIndex_ + 1) % 2; }
 
-    void bindCamera(VkCommandBuffer cmd, AllocatedBuffer& cameraUBO);
+    void bindCamera(VkCommandBuffer cmd);
     void drawLivingMapPoints(VkCommandBuffer cmd, uint32_t count);
     void drawLivingMapEdges(VkCommandBuffer cmd, uint32_t count);
-    void drawMeshScene(VkCommandBuffer cmd, AllocatedBuffer& cameraUBO,
-                       AllocatedBuffer& sceneUBO, const SceneUBO& scene,
+    void drawMeshScene(VkCommandBuffer cmd, AllocatedBuffer& sceneUBO,
+                       const SceneUBO& scene,
                        VkBuffer vertexBuffer, VkBuffer indexBuffer, uint32_t indexCount);
     void drawTacoScene(VkCommandBuffer cmd, VkBuffer vertexBuffer,
                        VkBuffer indexBuffer, uint32_t indexCount);

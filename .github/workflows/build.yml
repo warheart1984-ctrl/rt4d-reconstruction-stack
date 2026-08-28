@@ -34,3 +34,6 @@ jobs:
 
       - name: Compile shaders and renderer
         run: cmake --build build --parallel 2
+
+      - name: Run asset-contract tests
+        run: ctest --test-dir build --output-on-failure

@@ -18,6 +18,7 @@ layout(binding = 10, r16f)   uniform writeonly image2D oDenoiseConfidence;
 layout(push_constant) uniform Params {
     float wD, wN, wM, wV;
     float sigmaD, mMax, specThreshold, depthGradSlope;
+    float historyValid;
 } params;
 
 float depthGradient(vec2 uv, float eps) {
@@ -57,6 +58,7 @@ void main() {
                    pow(c_m, params.wM) *
                    pow(c_v, params.wV);
     c_hist = clamp(c_hist, 0.0, 1.0);
+    if (params.historyValid < 0.5) c_hist = 0.0;
 
     // Special cases.
     // Disocclusion (off-history): nuke confidence.

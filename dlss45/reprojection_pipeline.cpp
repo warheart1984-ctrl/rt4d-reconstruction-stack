@@ -65,10 +65,11 @@ bool ReprojectionPipeline::init(VkDevice device, VkDescriptorSetLayout dsLayout)
 }
 
 void ReprojectionPipeline::record(VkCommandBuffer cmd, VkDescriptorSet ds,
-                                  uint32_t w, uint32_t h) {
+                                  uint32_t w, uint32_t h, bool historyValid) {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout_, 0, 1, &ds, 0, nullptr);
     Params p{};
+    p.historyValid = historyValid ? 1.0f : 0.0f;
     vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Params), &p);
     vkCmdDispatch(cmd, (w + 7) / 8, (h + 7) / 8, 1);
 }

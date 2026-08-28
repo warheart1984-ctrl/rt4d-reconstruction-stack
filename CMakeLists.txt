@@ -19,21 +19,24 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(SOURCES
     ${SRC_DIR}/raster_pipeline.cpp
     ${SRC_DIR}/swapchain_manager.cpp
-    ${SRC_DIR}/vertex_buffer_manager.cpp
     ${SRC_DIR}/mandala_raster_renderer.cpp
     ${SRC_DIR}/scene_data.cpp
     ${SRC_DIR}/main.cpp
-    ${SRC_DIR}/texture_manager.cpp
     ${SRC_DIR}/gltf_mesh.cpp
     ${SRC_DIR}/dlss45/reprojection_pipeline.cpp
     ${SRC_DIR}/dlss45/denoiser_pipeline.cpp
     ${SRC_DIR}/dlss45/sr_pipeline.cpp
     ${SRC_DIR}/dlss45/tone_map_pipeline.cpp
-    ${SRC_DIR}/dlss45/ml_weights_loader.cpp
     ${SRC_DIR}/dlss45/dlss45_recon.cpp
 )
 
 add_executable(mandala_rasterize ${SOURCES})
+
+if(MSVC)
+    target_compile_options(mandala_rasterize PRIVATE /W4 /WX)
+else()
+    target_compile_options(mandala_rasterize PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 
 target_include_directories(mandala_rasterize PRIVATE ${SRC_DIR} ${SRC_DIR}/third_party/cgltf)
 target_link_libraries(mandala_rasterize PRIVATE Vulkan::Vulkan)
@@ -61,3 +64,24 @@ add_custom_target(compile_shaders
 )
 
 add_dependencies(mandala_rasterize compile_shaders)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(rt4d_gltf_mesh_tests
+        ${SRC_DIR}/tests/gltf_mesh_test.cpp
+        ${SRC_DIR}/gltf_mesh.cpp
+    )
+    target_include_directories(rt4d_gltf_mesh_tests PRIVATE
+        ${SRC_DIR}
+        ${SRC_DIR}/third_party/cgltf
+    )
+    if(MSVC)
+        target_compile_options(rt4d_gltf_mesh_tests PRIVATE /W4 /WX)
+    else()
+        target_compile_options(rt4d_gltf_mesh_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(
+        NAME rt4d_gltf_mesh_fixture
+        COMMAND rt4d_gltf_mesh_tests ${SRC_DIR}/armored-sentinel-v1.glb
+    )
+endif()

@@ -1,0 +1,5 @@
+GPU: AMD Radeon RX 480 Graphics (RADV POLARIS10)
+[SENTINEL] loaded armored-sentinel-v1.glb (2210 verts, 2160 idx, 5 primitives, 5/5 source-UV, 6 declared material slots; center 0.000 1.065 -0.272; radius 1.160)
+[capture] rendering 3 frame(s) to receipts/armored-sentinel-rt4d-reconstruction-v0.2.png ... [gpu-timer] RECON total: 0.828 ms
+[gpu-timer] RECON total: 0.801 ms
+OK

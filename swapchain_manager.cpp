@@ -126,16 +126,10 @@ void SwapchainManager::shutdown(VkDevice device) {
     destroyInternal(device);
 }
 
-bool SwapchainManager::recreate(VkDevice device, uint32_t w, uint32_t h) {
-    destroyInternal(device);
-    return createSwapchain(device, VK_NULL_HANDLE, w, h);
-}
-
-uint32_t SwapchainManager::acquireNextImage(VkDevice device, VkSemaphore signalSemaphore) {
-    uint32_t index;
-    vkAcquireNextImageKHR(device, swapchain_, UINT64_MAX,
-                           signalSemaphore, VK_NULL_HANDLE, &index);
-    return index;
+VkResult SwapchainManager::acquireNextImage(VkDevice device, VkSemaphore signalSemaphore,
+                                             uint32_t& imageIndex) {
+    return vkAcquireNextImageKHR(device, swapchain_, UINT64_MAX,
+                                 signalSemaphore, VK_NULL_HANDLE, &imageIndex);
 }
 
 VkResult SwapchainManager::present(VkQueue queue, uint32_t imageIndex,

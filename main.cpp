@@ -4,6 +4,8 @@
 #include "mandala_raster_renderer.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 #include <vector>
 #include <string>
 
@@ -16,6 +18,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageTypeFlagsEXT type,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
+    (void)type;
+    (void)pUserData;
     if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
         fprintf(stderr, "[VULKAN] %s\n", pCallbackData->pMessage);
     return VK_FALSE;
@@ -43,50 +47,69 @@ static bool checkValidationLayerSupport(const std::vector<const char*>& layers) 
     return true;
 }
 
+static void printUsage(const char* executable) {
+    fprintf(stderr,
+            "Usage: %s [living-map|taco|battle|dragon|sentinel|recon] "
+            "[--capture=PATH] [--frames=1..600] [--debug=gpu-timer]\n"
+            "\n"
+            "Only gpu-timer is a supported debug capability. Multi-frame counts "
+            "require --capture.\n",
+            executable);
+}
+
 int main(int argc, char** argv) {
     RenderScene startScene = RenderScene::LIVING_MAP;
     std::string capturePath;
+    uint32_t captureFrames = 1;
     struct DebugConfig {
-    bool gpuTimer = false;
-    bool dumpGBuffer = false;
-    enum class Visualizer { NONE, MOTION, CONFIDENCE, HISTORY, STABILITY } visualizer = Visualizer::NONE;
-    std::string captureSeqDir;
-    std::string encodePath;
-    bool renderDoc = false;
-    bool nsightMarkers = false;
-} debug;
+        bool gpuTimer = false;
+    } debug;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "taco") startScene = RenderScene::TACO;
+        if (arg == "--help" || arg == "-h") {
+            printUsage(argv[0]);
+            return 0;
+        }
+        else if (arg == "living-map") startScene = RenderScene::LIVING_MAP;
+        else if (arg == "taco") startScene = RenderScene::TACO;
         else if (arg == "battle") startScene = RenderScene::BATTLE;
         else if (arg == "dragon") startScene = RenderScene::DRAGON_HATCH;
         else if (arg == "sentinel") startScene = RenderScene::SENTINEL;
         else if (arg == "recon") startScene = RenderScene::RECON;
         else if (arg.rfind("--capture=", 0) == 0) capturePath = arg.substr(10);
+        else if (arg.rfind("--frames=", 0) == 0) {
+            try {
+                size_t parsed = 0;
+                const std::string value = arg.substr(9);
+                const unsigned long count = std::stoul(value, &parsed);
+                if (parsed != value.size() || count < 1 || count > 600)
+                    throw std::out_of_range("capture frame count");
+                captureFrames = static_cast<uint32_t>(count);
+            } catch (...) {
+                fprintf(stderr, "Invalid --frames value; expected 1..600\n");
+                return 2;
+            }
+        }
         else if (arg.rfind("--debug=", 0) == 0) {
             std::string sub = arg.substr(8);
             if (sub == "gpu-timer") debug.gpuTimer = true;
-            else if (sub == "dump-gbuffer") debug.dumpGBuffer = true;
-            else if (sub == "visualizer=memory") debug.visualizer = DebugConfig::Visualizer::MOTION;
-            else if (sub == "visualizer=confidence") debug.visualizer = DebugConfig::Visualizer::CONFIDENCE;
-            else if (sub == "visualizer=history") debug.visualizer = DebugConfig::Visualizer::HISTORY;
-            else if (sub == "visualizer=stability") debug.visualizer = DebugConfig::Visualizer::STABILITY;
-            else if (sub.rfind("capture-seq=", 0) == 0) debug.captureSeqDir = sub.substr(12);
-            else if (sub.rfind("encode=", 0) == 0) debug.encodePath = sub.substr(7);
-            else if (sub == "renderdoc") debug.renderDoc = true;
-            else if (sub == "nsight") debug.nsightMarkers = true;
-            else if (sub == "all") {
-                debug.gpuTimer = true;
-                debug.dumpGBuffer = true;
-                debug.visualizer = DebugConfig::Visualizer::MOTION;
-                debug.renderDoc = true;
-                debug.nsightMarkers = true;
-            }
             else {
-                fprintf(stderr, "Unknown --debug sub-flag: %s\n", sub.c_str());
+                fprintf(stderr, "Unsupported --debug capability: %s (available: gpu-timer)\n",
+                        sub.c_str());
+                return 2;
             }
         }
+        else {
+            fprintf(stderr, "Unknown argument: %s\n", arg.c_str());
+            printUsage(argv[0]);
+            return 2;
+        }
+    }
+
+    if (captureFrames != 1 && capturePath.empty()) {
+        fprintf(stderr, "--frames requires --capture=PATH\n");
+        return 2;
     }
 
     if (!glfwInit()) {
@@ -94,7 +117,9 @@ int main(int argc, char** argv) {
         return 1;
     }
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    // Resize is intentionally disabled until swapchain, render-pass, pipeline,
+    // and temporal-history recreation can be performed as one transaction.
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT,
         "Mandala Rendering Software — Raster", nullptr, nullptr);
@@ -205,21 +230,28 @@ int main(int argc, char** argv) {
     cfg.scene = startScene;
 
     MandalaRasterRenderer renderer;
-    renderer.setDebugFlags(debug.gpuTimer, debug.dumpGBuffer,
-                          static_cast<int>(debug.visualizer),
-                          debug.captureSeqDir, debug.encodePath);
+    renderer.setDebugFlags(debug.gpuTimer);
     if (!renderer.init(instance, phys, device, surface, cfg)) {
         fprintf(stderr, "Failed to init renderer\n");
         return 1;
     }
     renderer.setScene(startScene);
 
-    // Headless capture mode: render one frame and write PNG, then exit.
+    // Bounded capture mode: render one or more frames, then write the last
+    // presented frame. Multi-frame capture is required to exercise history.
     if (!capturePath.empty()) {
-        fprintf(stderr, "[capture] rendering one frame to %s ... ", capturePath.c_str());
-        renderer.renderFrame(1.0f / 60.0f);
+        fprintf(stderr, "[capture] rendering %u frame(s) to %s ... ",
+                captureFrames, capturePath.c_str());
+        bool renderOk = true;
+        for (uint32_t frame = 0; frame < captureFrames; ++frame) {
+            if (!renderer.renderFrame(1.0f / 60.0f)) {
+                renderOk = false;
+                break;
+            }
+        }
         vkDeviceWaitIdle(device);
-        if (renderer.captureScreenshot(capturePath))
+        const bool captureOk = renderOk && renderer.captureScreenshot(capturePath);
+        if (captureOk)
             fprintf(stderr, "OK\n");
         else
             fprintf(stderr, "FAILED\n");
@@ -230,7 +262,7 @@ int main(int argc, char** argv) {
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
-        return 0;
+        return captureOk ? 0 : 1;
     }
 
     fprintf(stderr, "Rendering. Keys: 1=LivingMap 2=Taco 3=Battle 4=Dragon 5=Sentinel 6=RT4D Reconstruction Stack  P=screenshot  ESC=quit\n");
@@ -240,6 +272,7 @@ int main(int argc, char** argv) {
     double fpsAccum = 0.0;
     double lastFpsPrint = lastTime;
 
+    bool runtimeOk = true;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -272,15 +305,10 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "FAILED\n");
         }
 
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-        if (w > 0 && h > 0 && ((uint32_t)w != cfg.width || (uint32_t)h != cfg.height)) {
-            renderer.resize((uint32_t)w, (uint32_t)h);
-            cfg.width = (uint32_t)w;
-            cfg.height = (uint32_t)h;
+        if (!renderer.renderFrame(dt)) {
+            runtimeOk = false;
+            break;
         }
-
-        renderer.renderFrame(dt);
 
         // FPS / frame-time benchmark
         frameCount++;
@@ -311,5 +339,5 @@ int main(int argc, char** argv) {
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
-    return 0;
+    return runtimeOk ? 0 : 1;
 }

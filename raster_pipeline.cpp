@@ -1,4 +1,5 @@
 #include "raster_pipeline.h"
+#include "gltf_mesh.h"
 #include <fstream>
 #include <string>
 #include <vector>
@@ -244,7 +245,7 @@ bool RasterPipeline::init(VkDevice device, VkPhysicalDevice phys,
 
     VkVertexInputBindingDescription meshBind{};
     meshBind.binding = 0;
-    meshBind.stride = 32;
+    meshBind.stride = sizeof(GLTFMeshVertex);
     meshBind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     VkVertexInputAttributeDescription meshAttrs[3];
     setAttr(meshAttrs[0], 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0);
@@ -422,8 +423,8 @@ void RasterPipeline::freeBuffer(VkDevice device, AllocatedBuffer& buf) {
     buf = {};
 }
 
-void RasterPipeline::uploadToBuffer(VkDevice device, AllocatedBuffer& buf,
-                                      const void* data, VkDeviceSize size) {
+void RasterPipeline::uploadToBuffer(AllocatedBuffer& buf, const void* data,
+                                    VkDeviceSize size) {
     if (!buf.mapped) return;
     memcpy(buf.mapped, data, size);
 }
@@ -455,7 +456,7 @@ void RasterPipeline::endRenderPass(VkCommandBuffer cmd) {
     vkCmdEndRenderPass(cmd);
 }
 
-void RasterPipeline::bindCamera(VkCommandBuffer cmd, AllocatedBuffer& cameraUBO) {
+void RasterPipeline::bindCamera(VkCommandBuffer cmd) {
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             cameraOnlyLayout_, 0, 1, &cameraSets_[frameIndex_], 0, nullptr);
 }
@@ -473,10 +474,10 @@ void RasterPipeline::drawLivingMapEdges(VkCommandBuffer cmd, uint32_t count) {
     vkCmdDraw(cmd, count * 2, 1, 0, 0);
 }
 
-void RasterPipeline::drawMeshScene(VkCommandBuffer cmd, AllocatedBuffer& cameraUBO,
-                                    AllocatedBuffer& sceneUBO, const SceneUBO& scene,
+void RasterPipeline::drawMeshScene(VkCommandBuffer cmd, AllocatedBuffer& sceneUBO,
+                                    const SceneUBO& scene,
                                     VkBuffer vb, VkBuffer ib, uint32_t indexCount) {
-    uploadToBuffer(device_, sceneUBO, &scene, sizeof(SceneUBO));
+    uploadToBuffer(sceneUBO, &scene, sizeof(SceneUBO));
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             cameraSceneLayout_, 0, 1, &meshSets_[frameIndex_], 0, nullptr);
