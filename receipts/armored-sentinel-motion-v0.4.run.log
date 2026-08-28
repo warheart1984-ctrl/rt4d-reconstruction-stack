@@ -1,0 +1,31 @@
+GPU: AMD Radeon RX 480 Graphics (RADV POLARIS10)
+[SENTINEL] loaded fixtures/armored-sentinel-textured-v0.3.glb (2210 verts, 2160 idx, 5 primitives, 5/5 source-UV, 0 generated-UV, 6 declared materials, 1 decoded texture(s), 6 textured material(s), UV policy reject; center 0.000 1.065 -0.272; radius 1.160)
+[MATERIAL] staged 1 source texture(s) and one white fallback into 2 device-local image(s); 6 material descriptors
+[capture] rendering 12 frame(s), sequence=deterministic-orbit-v1, cut=6
+[CAMERA] frame=0 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.576354,1.123021,2.571492)
+[HISTORY] frame=0 reset=initial_frame
+[gpu-timer] RECON total: 4.116 ms
+[CAMERA] frame=1 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.505100,1.126948,2.585011)
+[gpu-timer] RECON total: 3.932 ms
+[CAMERA] frame=2 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.433531,1.130761,2.596745)
+[gpu-timer] RECON total: 3.987 ms
+[CAMERA] frame=3 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.361690,1.134351,2.606685)
+[gpu-timer] RECON total: 3.949 ms
+[CAMERA] frame=4 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.289624,1.137615,2.614827)
+[gpu-timer] RECON total: 0.817 ms
+[CAMERA] frame=5 sequence=deterministic-orbit-v1 segment=0 cut=false eye=(-0.217376,1.140458,2.621165)
+[gpu-timer] RECON total: 3.960 ms
+[CAMERA] frame=6 sequence=deterministic-orbit-v1 segment=1 cut=true eye=(1.868921,1.142798,1.947111)
+[HISTORY] frame=6 reset=camera_cut
+[gpu-timer] RECON total: 4.095 ms
+[CAMERA] frame=7 sequence=deterministic-orbit-v1 segment=1 cut=false eye=(1.923803,1.144567,1.899699)
+[gpu-timer] RECON total: 3.955 ms
+[CAMERA] frame=8 sequence=deterministic-orbit-v1 segment=1 cut=false eye=(1.977482,1.145716,1.850931)
+[gpu-timer] RECON total: 3.991 ms
+[CAMERA] frame=9 sequence=deterministic-orbit-v1 segment=1 cut=false eye=(2.029925,1.146211,1.800836)
+[gpu-timer] RECON total: 3.943 ms
+[CAMERA] frame=10 sequence=deterministic-orbit-v1 segment=1 cut=false eye=(2.081100,1.146037,1.749445)
+[gpu-timer] RECON total: 4.021 ms
+[CAMERA] frame=11 sequence=deterministic-orbit-v1 segment=1 cut=false eye=(2.130975,1.145199,1.696792)
+[gpu-timer] final sample: 4.001 ms
+[capture] OK

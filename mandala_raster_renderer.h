@@ -9,6 +9,7 @@
 #include <vector>
 #include <array>
 #include <fstream>
+#include <limits>
 #include <string>
 
 struct ProvenanceFrame {
@@ -37,6 +38,8 @@ struct RenderConfig {
     std::string assetPath = "armored-sentinel-v1.glb";
     GLTFMissingUvPolicy missingUvPolicy =
         GLTFMissingUvPolicy::RejectTexturedPrimitive;
+    RT4DCameraSequenceMode cameraSequence = RT4DCameraSequenceMode::Static;
+    uint32_t cameraCutFrame = std::numeric_limits<uint32_t>::max();
 };
 
 struct FrameResources {
@@ -54,7 +57,7 @@ struct GpuTimer {
     uint32_t count = 0;
     int currentPool = 0;
 
-    void init(VkDevice dev, VkPhysicalDevice phys, uint32_t maxQueries = 64) {
+    bool init(VkDevice dev, VkPhysicalDevice phys, uint32_t maxQueries = 64) {
         device = dev;
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(phys, &props);
@@ -66,8 +69,12 @@ struct GpuTimer {
             info.queryType = VK_QUERY_TYPE_TIMESTAMP;
             info.queryCount = maxQueries;
             count = maxQueries;
-            vkCreateQueryPool(device, &info, nullptr, &pools[i]);
+            if (vkCreateQueryPool(device, &info, nullptr, &pools[i]) != VK_SUCCESS) {
+                shutdown();
+                return false;
+            }
         }
+        return true;
     }
 
     void shutdown() {
@@ -89,9 +96,10 @@ struct GpuTimer {
         vkCmdResetQueryPool(cmd, pools[currentPool], 0, count);
     }
 
-    double getMs(uint32_t start, uint32_t end, int poolIndex) {
+    bool getMs(uint32_t start, uint32_t end, int poolIndex, double& output) {
+        output = 0.0;
         if (start >= count || end >= count || poolIndex < 0 || poolIndex > 1)
-            return 0.0;
+            return false;
         uint64_t timestamps[2] = {0, 0};
         const VkQueryResultFlags flags =
             VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT;
@@ -105,9 +113,10 @@ struct GpuTimer {
                                   sizeof(uint64_t), flags);
         if (startResult != VK_SUCCESS || endResult != VK_SUCCESS ||
             timestamps[1] < timestamps[0]) {
-            return 0.0;
+            return false;
         }
-        return double(timestamps[1] - timestamps[0]) * timestampPeriod / 1e6;
+        output = double(timestamps[1] - timestamps[0]) * timestampPeriod / 1e6;
+        return true;
     }
 };
 
@@ -119,7 +128,16 @@ public:
     void shutdown();
     bool renderFrame(float deltaTime);
     void setScene(RenderScene scene);
-    bool captureScreenshot(const std::string& path);
+    bool captureScreenshot(const std::string& path,
+                           std::vector<uint8_t>* rgbaOutput = nullptr);
+    bool exportReconObservability(const std::string& directory,
+                                  uint32_t frameIndex, bool writeImages,
+                                  RT4DFrameMetrics& metrics);
+    bool finalizeGpuTimings();
+    const std::vector<double>& gpuFrameTimesMs() const { return gpuFrameTimesMs_; }
+    const std::vector<RT4DCameraSample>& cameraSamples() const {
+        return cameraSamples_;
+    }
 
     // Debug / profiling
     void setDebugFlags(bool gpuTimer);
@@ -178,6 +196,11 @@ private:
     // Debug / profiling
     GpuTimer gpuTimer_;
     bool debugGpuTimer_ = false;
+    uint64_t timingSamplesCollected_ = 0;
+    std::vector<double> gpuFrameTimesMs_;
+    uint32_t cameraSequenceSegment_ = 0;
+    bool cameraCutApplied_ = false;
+    std::vector<RT4DCameraSample> cameraSamples_;
     RenderConfig config_;
     float time_ = 0.0f;
 };

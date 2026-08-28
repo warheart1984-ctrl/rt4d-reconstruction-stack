@@ -11,13 +11,14 @@ The current proof runs `armored-sentinel-v1.glb` through:
 4. Per-material low-resolution G-buffer draws
 5. Temporal reprojection and confidence-weighted denoising
 6. Classical super-resolution, tone-map composition, and PNG readback
+7. Typed observability exports, motion sequences, and temporal metrics
 
 This project is **not NVIDIA DLSS**. Its current super-resolution path is
 classical compute; ML super-resolution and frame generation are not proven.
 
-Project status: proof-stage native GPU stack with verified material and temporal
-captures plus portable source-build CI. It is not yet a production renderer or
-an artist-approved material pipeline.
+Project status: proof-stage native GPU stack with verified material, motion,
+history-reset, and observability captures plus portable source-build CI. It is
+not yet a production renderer or an artist-approved material pipeline.
 
 See [the capability matrix](docs/CAPABILITIES.md) for the exact boundary
 between verified, partial, and unavailable features, and [the roadmap](docs/ROADMAP.md)
@@ -25,13 +26,15 @@ for the order in which the stack is intended to grow.
 
 ## Verified proof
 
-The verified v0.3 1280x720 material reconstruction capture was produced on an
-AMD Radeon RX 480 using RADV. Exact source, binary, fixture, shader, and capture
-hashes are in:
+The verified v0.4 proof is a deterministic camera-orbit sequence with an
+explicit camera cut. It exports final composites, low-resolution internal
+images, per-frame temporal diagnostics, and full-sample plus post-warm-up GPU
+timing percentiles on an AMD Radeon RX 480 using RADV. Exact source, binary,
+shader, sequence, export, and capture hashes are in:
 
-- `receipts/rt4d-reconstruction-stack-v0.3-receipt.json`
-- `receipts/armored-sentinel-material-reconstruction-v0.3.run.log`
-- `receipts/armored-sentinel-material-reconstruction-v0.3.png`
+- `receipts/rt4d-reconstruction-stack-v0.4-receipt.json`
+- `receipts/armored-sentinel-motion-v0.4.run.log`
+- `receipts/armored-sentinel-motion-v0.4-metrics.json`
 
 Material status is `provisional_source_materials`: the reconstruction path now
 evaluates glTF base-color factors and base-color textures using five primitive
@@ -40,9 +43,10 @@ the GLB; it is source-provided to the runtime but is not artist-authored or
 artist-reviewed look development. Metallic/roughness, alpha modes, emissive,
 normal maps, and full PBR remain outside this release.
 
-See [the material policy](docs/MATERIAL_POLICY.md) for the source-UV and
-generated-planar boundary. The released v0.2 baseline remains available as a
-[tagged release](https://github.com/warheart1984-ctrl/rt4d-reconstruction-stack/releases/tag/v0.2).
+See [the observability contract](docs/OBSERVABILITY.md) for visualization and
+metric semantics, and [the material policy](docs/MATERIAL_POLICY.md) for the
+source-UV and generated-planar boundary. The material classification remains
+provisional; v0.4 does not add artist review or full PBR.
 
 ## Build
 
@@ -61,14 +65,22 @@ Run from the repository root so shader and fixture paths resolve correctly:
 ```bash
 ./build-rt4d-recon/mandala_rasterize recon \
   --asset=fixtures/armored-sentinel-textured-v0.3.glb \
-  --frames=3 \
-  --capture=receipts/armored-sentinel-material-reconstruction-v0.3.png \
-  --debug=gpu-timer
+  --frames=12 \
+  --camera-sequence=orbit \
+  --camera-cut-frame=6 \
+  --sequence-dir=receipts/armored-sentinel-motion-v0.4-sequence \
+  --observability-dir=receipts/armored-sentinel-observability-v0.4 \
+  --metrics=receipts/armored-sentinel-motion-v0.4-metrics.json \
+  --capture=receipts/armored-sentinel-motion-v0.4-final.png
 ```
 
-`--frames=3` exercises persisted color, depth, and normal history. The first
-frame explicitly rejects history; each completed frame supplies history to the
-next. Capture frame counts are bounded to 1–600.
+The sequence uses frame-indexed camera positions rather than wall-clock time.
+Frame zero and the camera-cut frame explicitly reject and clear history. The
+observability directory receives cut and final keyframes; the metrics receipt
+contains camera samples, motion, confidence, residual, composite-delta, and GPU
+timing percentiles. `--metrics` requires `--sequence-dir` so composite deltas
+cannot silently become unobserved zeroes. Capture frame counts are bounded to
+1–600.
 
 For the factor-only comparison using the released Sentinel without an image:
 
@@ -87,9 +99,9 @@ are counted and logged separately from source UVs.
 The GLB fixtures are intentionally kept in this repository because they are
 small and form part of the reproducible proof contract.
 
-The current window is intentionally fixed at 1280x720. Transactional resize
-across swapchain, render passes, pipelines, and temporal history is not yet
-implemented.
+The current window is intentionally fixed at 1280x720. Camera cuts use the same
+typed reset decision reserved for a future transactional resize, but swapchain,
+render-pass, pipeline, export, and history recreation is not yet implemented.
 
 ## License
 

@@ -1,0 +1,16 @@
+{
+  "schema": "rt4d-observability-export/0.4",
+  "frameIndex": 11,
+  "dimensions": [640, 360],
+  "historyValidForFrame": true,
+  "historyResetReason": "none",
+  "historyExportSemantic": "post_frame_state_persisted_for_next_frame",
+  "motionVisualization": "foreground masked; R=0.5+xPixels/32, G=0.5+yPixels/32, B=magnitude/16",
+  "depthVisualization": "sqrt(one_minus_device_depth)",
+  "confidenceVisualization": "foreground-masked grayscale",
+  "files": [
+    "gbuffer-color.png", "gbuffer-depth.png", "gbuffer-normal.png", "gbuffer-material.png",
+    "motion.png", "reprojected-color.png", "reprojection-confidence.png",
+    "history-color-next.png", "history-depth-next.png", "history-normal-next.png"
+  ]
+}

@@ -3,10 +3,12 @@
 #include <vulkan/vulkan.h>
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "gbuffer_contract.h"
 #include "dlss45_pass_graph.h"
+#include "rt4d_observability.h"
 #include "reprojection_pipeline.h"
 #include "denoiser_pipeline.h"
 #include "sr_pipeline.h"
@@ -54,12 +56,20 @@ public:
                 const float viewMatrix[16], const float projMatrix[16],
                 const float camPos[3],
                 uint32_t swapIndex, VkFramebuffer swapFramebuffer,
-                uint32_t displayW, uint32_t displayH);
+                uint32_t displayW, uint32_t displayH,
+                uint64_t frameIndex);
+
+    void requestHistoryReset(RT4DHistoryResetReason reason);
+    bool exportObservability(VkCommandPool commandPool, VkQueue queue,
+                             const std::string& directory,
+                             uint32_t frameIndex, bool writeImages,
+                             RT4DFrameMetrics& metrics);
 
     uint32_t lrWidth() const { return lrW_; }
     uint32_t lrHeight() const { return lrH_; }
     uint32_t deviceLocalTextureCount() const { return deviceLocalTextureCount_; }
     uint32_t sourceTextureUploadCount() const { return sourceTextureUploadCount_; }
+    uint64_t historyResetCount() const { return historyResetCount_; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -125,6 +135,11 @@ private:
 
     float prevViewProj_[16] = {};
     bool firstFrame_ = true;
+    RT4DHistoryResetReason pendingHistoryReset_ = RT4DHistoryResetReason::None;
+    RT4DHistoryResetReason lastFrameResetReason_ =
+        RT4DHistoryResetReason::InitialFrame;
+    bool lastFrameHistoryValid_ = false;
+    uint64_t historyResetCount_ = 0;
 
     bool createImage(ImageObj& img, uint32_t w, uint32_t h, VkFormat fmt,
                      VkImageUsageFlags usage, VkImageAspectFlags aspect);
@@ -136,7 +151,21 @@ private:
                                 uint32_t width, uint32_t height,
                                 VkCommandPool uploadPool, VkQueue uploadQueue);
     bool createDescriptors();
-    void initializeHistory(VkCommandBuffer cmd);
+    void clearHistory(VkCommandBuffer cmd, bool resourcesFirstFrame);
     void updateHistory(VkCommandBuffer cmd);
+
+public:
+    struct ReadbackImage {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        uint32_t channels = 0;
+        std::vector<float> values;
+    };
+
+private:
+    bool readbackImage(const ImageObj& image, VkFormat format,
+                       VkImageAspectFlags aspect, uint32_t width, uint32_t height,
+                       VkCommandPool commandPool, VkQueue queue,
+                       ReadbackImage& output);
     void matMul(float* out, const float* a, const float* b); // out = a*b (4x4)
 };

@@ -1,0 +1,211 @@
+{
+  "schema": "rt4d-reconstruction-stack-receipt/0.4",
+  "status": "passed_live_observability_motion_and_history_reset_gpu_capture",
+  "created_at": "2026-08-27T22:50:43-04:00",
+  "backend": "Vulkan",
+  "source_control": {
+    "repository": "https://github.com/warheart1984-ctrl/rt4d-reconstruction-stack",
+    "baseline_commit": "bf5e902",
+    "release_tag": "v0.4"
+  },
+  "hardware": {
+    "adapter": "AMD Radeon RX 480 Graphics (RADV POLARIS10)",
+    "driver": "Mesa RADV 25.2.8",
+    "vulkan_api": "1.4.318"
+  },
+  "build": {
+    "debug_command": "cmake -S . -B build-v04 -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON && cmake --build build-v04 --parallel 2",
+    "release_command": "cmake -S . -B build-v04-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON && cmake --build build-v04-release --parallel 2",
+    "sanitizer_command": "cmake -S . -B build-v04-sanitize -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined && cmake --build build-v04-sanitize --parallel 2",
+    "proof_binary": "build-v04/mandala_rasterize",
+    "proof_binary_sha256": "33c0e877cd1b6ab2d93c3f631ca6fec3da1f9759e18020b0ddb67beb872fc564",
+    "compiler_warnings_as_errors": true,
+    "ctest": {
+      "debug": {"passed": 3, "failed": 0},
+      "release": {"passed": 3, "failed": 0},
+      "asan_ubsan": {"passed": 3, "failed": 0}
+    }
+  },
+  "source_asset": {
+    "path": "armored-sentinel-v1.glb",
+    "sha256": "06c76ee61f1582708e50fe208939180ba9b529825052db5afd7f1d2e54e0201e",
+    "vertices": 2210,
+    "indices": 2160,
+    "primitives": 5,
+    "declared_materials": 6,
+    "material_draw_ranges": 5
+  },
+  "proof_fixture": {
+    "path": "fixtures/armored-sentinel-textured-v0.3.glb",
+    "sha256": "84a3b901e028499284b80eb6200159e23b201bc5e9d0de9e144ecb6d7f83dfea",
+    "bytes": 53056,
+    "textureOrigin": "generated_diagnostic_checker",
+    "usesSourceUv": true,
+    "source_uv_primitives": 5,
+    "generated_uv_primitives": 0,
+    "missing_uv_policy": "reject",
+    "textureArtistReviewed": false,
+    "uvArtistReviewed": false,
+    "materialAssignmentArtistReviewed": false
+  },
+  "materials": {
+    "classification": "geometry_based_provisional_materials",
+    "runtime_assignment_proven": true,
+    "source_uv_consumption_proven": true,
+    "base_color_factor_and_texture_sampling_proven": true,
+    "artist_review": {
+      "status": "not_reviewed",
+      "textureArtistReviewed": false,
+      "uvArtistReviewed": false,
+      "materialAssignmentArtistReviewed": false
+    },
+    "interpretation": "Geometry-derived draw ranges, source UV consumption, base-color factors, and diagnostic texture sampling are runtime-proven provisional materials. Artist-approved texture art, UV layout, material assignment, and look development are not claimed."
+  },
+  "gpu_texture_upload": {
+    "source_decode": "embedded PNG to RGBA8",
+    "staging_memory": "HOST_VISIBLE|HOST_COHERENT",
+    "destination_format": "VK_FORMAT_R8G8B8A8_SRGB",
+    "destination_tiling": "VK_IMAGE_TILING_OPTIMAL",
+    "destination_memory": "VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT",
+    "source_texture_images": 1,
+    "white_fallback_images": 1,
+    "material_descriptor_sets": 6
+  },
+  "reconstruction": {
+    "passes_executed": [
+      "per_material_gbuffer",
+      "temporal_reprojection",
+      "confidence_denoiser",
+      "classical_2x_super_resolution",
+      "tone_map_composite",
+      "typed_internal_image_readback"
+    ],
+    "shader_sha256": {
+      "gbuffer.vert": "6589fd46d5eabdf49bc6698a7c1284610a69e132bd1210e3fa2044d98c71808d",
+      "gbuffer.frag": "13f3128fc7280ae74277d24ac5eb9075187d54ee157052b43ca5bd2e7dacaf4e",
+      "reprojection.comp": "6dd28a0411175a9621b88604b2a39d4fd16f439e775d73d4039cdb3545e248b2",
+      "denoiser.comp": "ea1207d2d6154ddd2948ac04c01e63100fd2493b7e6093fc6fae7274f908ea73",
+      "sr_classic.comp": "9e4c66b8dff1e9d18fc7027a284caa09b3baf5762d1fdbe33c5177755d209fe9",
+      "tone_map.frag": "14d14426e3ce2bcc842f6905daf3235ca089a36879cfd94fb094337e9c34a263"
+    }
+  },
+  "motion_sequence": {
+    "name": "deterministic-orbit-v1",
+    "camera_source": "integer frame index and deterministic segment",
+    "frame_count": 12,
+    "camera_cut_frame": 6,
+    "history_reset_frames": [0, 6],
+    "history_reset_reasons": ["initial_frame", "camera_cut"],
+    "history_reset_count": 2,
+    "history_valid_frames": 10,
+    "composite_dimensions": [1280, 720],
+    "sequence_directory": "receipts/armored-sentinel-motion-v0.4-sequence",
+    "checksum_manifest": "receipts/armored-sentinel-motion-v0.4-sequence.sha256",
+    "checksum_manifest_sha256": "31aab3c5e265f1f9ea7ce01987537cff2113eeb42edf0c894dc2291c1409eafa",
+    "determinism_spot_check": {
+      "runs": 2,
+      "frames_per_run": 4,
+      "composite_pngs_byte_identical": true,
+      "camera_samples_identical": true,
+      "per_frame_temporal_metrics_identical": true,
+      "non_timing_summary_identical": true,
+      "gpu_timing_excluded_from_determinism_claim": true
+    }
+  },
+  "history_lifecycle": {
+    "initial_frame": "cleared and rejected",
+    "camera_cut": "existing shader-read history cleared and rejected",
+    "camera_cut_motion_policy": "previous view-projection set to current view-projection",
+    "transactional_resize": {
+      "typed_reset_reason_contract_tested": true,
+      "runtime_resize_implemented": false,
+      "runtime_resize_rejected": true
+    }
+  },
+  "observability": {
+    "root": "receipts/armored-sentinel-observability-v0.4",
+    "keyframes": [6, 11],
+    "dimensions": [640, 360],
+    "exports": [
+      "gbuffer-color",
+      "gbuffer-depth",
+      "gbuffer-normal",
+      "gbuffer-material",
+      "motion",
+      "reprojected-color",
+      "reprojection-confidence",
+      "history-color-next",
+      "history-depth-next",
+      "history-normal-next"
+    ],
+    "history_export_semantic": "post_frame_state_persisted_for_next_frame",
+    "cut_frame_confidence_observed_zero": true,
+    "final_frame_confidence_observed_recovered": true,
+    "checksum_manifest": "receipts/armored-sentinel-observability-v0.4.sha256",
+    "checksum_manifest_sha256": "3d1f4d3acb5a57c0beaa1de020af6d815c2735e275b1eb487d6e6236c4cfb7c0",
+    "visual_inspection": "cut and final composites show distinct camera viewpoints; cut confidence is black; final confidence, motion, depth, normal, material, and next-history exports are structurally coherent"
+  },
+  "metrics": {
+    "path": "receipts/armored-sentinel-motion-v0.4-metrics.json",
+    "sha256": "e59b6e23001b95f4bf8b7b52ecd8f8484a19be6bcd50df836955654ac1ed5591",
+    "boundary": "observed diagnostics, not a perceptual-quality score",
+    "summary": {
+      "meanFrameMotionPixels": 0.760746667,
+      "p95FrameMotionPixels": 1.04423027,
+      "meanReprojectionConfidenceHistoryValidFrames": 0.978780422,
+      "meanAcceptedHistoryRatioHistoryValidFrames": 0.985101753,
+      "meanAcceptedLumaResidualHistoryValidFrames": 0.00471685239,
+      "meanCompositeLumaMae": 0.00277293288,
+      "p95CompositeLumaMae": 0.00905591641
+    }
+  },
+  "gpu_timing_ms": {
+    "all_frames": {
+      "sample_count": 12,
+      "min": 0.81664,
+      "p50": 3.97328,
+      "p95": 4.10428,
+      "p99": 4.113784,
+      "max": 4.11616
+    },
+    "post_warmup": {
+      "warmup_frames_excluded": 2,
+      "sample_count": 10,
+      "p50": 3.97328,
+      "p95": 4.061368,
+      "p99": 4.0879216,
+      "max": 4.09456
+    },
+    "interpretation": "Timestamp samples include discrete fast and slow modes on this driver. The receipt reports observed percentiles and does not generalize them into a cross-driver benchmark."
+  },
+  "captures": {
+    "final": {
+      "path": "receipts/armored-sentinel-motion-v0.4-final.png",
+      "dimensions": [1280, 720],
+      "sha256": "151b877efac0c2c0341890854575a832a92a6fa17116237ac91853a67513481b"
+    },
+    "run_log": {
+      "path": "receipts/armored-sentinel-motion-v0.4.run.log",
+      "sha256": "f595ff150e82df4d03c85ead324b114c63f9e71d812c906ef83dc8e0814d96ba"
+    },
+    "validation_messages_observed": 0
+  },
+  "truthful_rejections": {
+    "camera_cut_without_orbit": 2,
+    "camera_cut_out_of_range": 2,
+    "observability_outside_recon": 2,
+    "multiframe_without_output": 2,
+    "runtime_resize": 2,
+    "metrics_without_sequence_capture": 2
+  },
+  "limitations": [
+    "The texture is deterministic generated fixture data, not artist-authored art.",
+    "Geometry, UVs, texture, and material assignments have not received artist review.",
+    "PNG exports are documented diagnostic mappings; numeric metrics use float readback before mapping.",
+    "The camera path moves around static geometry; object motion and production disocclusion quality remain ungraded.",
+    "Transactional resize has a typed history-reset seam and CPU contract only; runtime resize remains rejected.",
+    "Timing is one bounded RX 480 RADV observation, not a statistically controlled or cross-driver performance claim.",
+    "Metallic/roughness, alpha modes, mip chains, normal, emissive, occlusion, texture transforms, nonzero texture-coordinate sets, KTX/Basis, and source sampler fidelity remain unsupported.",
+    "ML super-resolution, frame generation, and NVIDIA DLSS are not claimed."
+  ]
+}

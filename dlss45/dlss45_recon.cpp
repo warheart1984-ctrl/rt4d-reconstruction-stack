@@ -1,10 +1,18 @@
 #include "dlss45_recon.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <vector>
+
+#include "stb_image_write.h"
 
 // ---- small local helpers -------------------------------------------------
 
@@ -730,14 +738,21 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
 
     // History (LR).
     if (!createImage(colorHistory_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(depthHistory_, lrW_, lrH_, VK_FORMAT_D32_SFLOAT,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                     VK_IMAGE_ASPECT_DEPTH_BIT)) return false;
     if (!createImage(normalHistory_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT,
-                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                     VK_IMAGE_ASPECT_COLOR_BIT)) return false;
 
     // Reconstruction (LR) storage targets.
-    VkImageUsageFlags storUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    VkImageUsageFlags storUsage = VK_IMAGE_USAGE_STORAGE_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (!createImage(reprojColor_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, storUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(reprojConf_, lrW_, lrH_, VK_FORMAT_R16_SFLOAT, storUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
     if (!createImage(denoised_, lrW_, lrH_, VK_FORMAT_R16G16B16A16_SFLOAT, storUsage, VK_IMAGE_ASPECT_COLOR_BIT)) return false;
@@ -764,22 +779,33 @@ bool DLSS45Recon::init(VkDevice device, VkPhysicalDevice phys,
 
     memset(prevViewProj_, 0, sizeof(prevViewProj_));
     prevViewProj_[0] = prevViewProj_[5] = prevViewProj_[10] = prevViewProj_[15] = 1.0f;
+    firstFrame_ = true;
+    pendingHistoryReset_ = RT4DHistoryResetReason::None;
+    lastFrameResetReason_ = RT4DHistoryResetReason::InitialFrame;
+    lastFrameHistoryValid_ = false;
+    historyResetCount_ = 0;
     return true;
 }
 
-void DLSS45Recon::initializeHistory(VkCommandBuffer cmd) {
+void DLSS45Recon::clearHistory(VkCommandBuffer cmd, bool resourcesFirstFrame) {
+    const VkImageLayout oldLayout = resourcesFirstFrame
+        ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    const VkPipelineStageFlags sourceStage = resourcesFirstFrame
+        ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    const VkAccessFlags sourceAccess = resourcesFirstFrame
+        ? 0 : VK_ACCESS_SHADER_READ_BIT;
     transitionLayout(cmd, colorHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
-                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+                     oldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     sourceStage, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     sourceAccess, VK_ACCESS_TRANSFER_WRITE_BIT);
     transitionLayout(cmd, depthHistory_.image, VK_IMAGE_ASPECT_DEPTH_BIT,
-                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+                     oldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     sourceStage, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     sourceAccess, VK_ACCESS_TRANSFER_WRITE_BIT);
     transitionLayout(cmd, normalHistory_.image, VK_IMAGE_ASPECT_COLOR_BIT,
-                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                     0, VK_ACCESS_TRANSFER_WRITE_BIT);
+                     oldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     sourceStage, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     sourceAccess, VK_ACCESS_TRANSFER_WRITE_BIT);
 
     VkImageSubresourceRange colorRange{};
     colorRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -912,8 +938,21 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          const float viewMatrix[16], const float projMatrix[16],
                          const float camPos[3],
                          uint32_t swapIndex, VkFramebuffer swapFramebuffer,
-                         uint32_t displayW, uint32_t displayH) {
+                         uint32_t displayW, uint32_t displayH,
+                         uint64_t frameIndex) {
     (void)swapIndex;
+    const bool resourcesFirstFrame = firstFrame_;
+    const RT4DHistoryDecision historyDecision = rt4dResolveHistoryDecision(
+        resourcesFirstFrame, pendingHistoryReset_);
+    lastFrameHistoryValid_ = historyDecision.historyValid;
+    lastFrameResetReason_ = historyDecision.resetReason;
+    if (!historyDecision.historyValid) {
+        ++historyResetCount_;
+        fprintf(stderr, "[HISTORY] frame=%llu reset=%s\n",
+                static_cast<unsigned long long>(frameIndex),
+                rt4dHistoryResetReasonName(historyDecision.resetReason));
+    }
+
     // First frame: transition storage images out of UNDEFINED. History is
     // explicitly cleared below, rejected by the temporal shaders for frame 0,
     // and populated from the current G-buffer at the end of every frame.
@@ -948,7 +987,10 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
     // Upload camera UBO: viewProj = proj * view; prevViewProj from stored value.
     DLSS45CameraUBO cam{};
     matMul(cam.viewProj, projMatrix, viewMatrix);
-    memcpy(cam.prevViewProj, prevViewProj_, sizeof(float) * 16);
+    if (historyDecision.historyValid)
+        memcpy(cam.prevViewProj, prevViewProj_, sizeof(float) * 16);
+    else
+        memcpy(cam.prevViewProj, cam.viewProj, sizeof(float) * 16);
     memcpy(cam.camPos, camPos, sizeof(float) * 3);
     cam.camPos[3] = 1.0f;
     cam.resolution[0] = (float)lrW_; cam.resolution[1] = (float)lrH_;
@@ -1020,7 +1062,8 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                      VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_ACCESS_SHADER_READ_BIT);
 
-    if (firstFrame_) initializeHistory(cmd);
+    if (!historyDecision.historyValid)
+        clearHistory(cmd, resourcesFirstFrame);
 
     // ---- 2) Temporal reprojection ----
     // (reads G-buffer + history as SHADER_READ_ONLY; writes reproj as storage GENERAL)
@@ -1035,7 +1078,7 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
     }
-    reproj_.record(cmd, reprojSet_, lrW_, lrH_, !firstFrame_);
+    reproj_.record(cmd, reprojSet_, lrW_, lrH_, historyDecision.historyValid);
 
     // Transition reproj storage outputs GENERAL -> SHADER_READ_ONLY for denoiser sampling.
     transitionLayout(cmd, reprojColor_.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1059,7 +1102,7 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_SHADER_WRITE_BIT);
     }
-    denoiser_.record(cmd, denoiserSet_, lrW_, lrH_, !firstFrame_);
+    denoiser_.record(cmd, denoiserSet_, lrW_, lrH_, historyDecision.historyValid);
 
     // Transition denoiser storage outputs GENERAL -> SHADER_READ_ONLY for SR sampling.
     transitionLayout(cmd, denoised_.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1110,6 +1153,410 @@ void DLSS45Recon::render(VkCommandBuffer cmd,
     // Store current viewProj as prev for next frame (motion).
     memcpy(prevViewProj_, cam.viewProj, sizeof(float) * 16);
     firstFrame_ = false;
+    pendingHistoryReset_ = RT4DHistoryResetReason::None;
+}
+
+void DLSS45Recon::requestHistoryReset(RT4DHistoryResetReason reason) {
+    if (reason != RT4DHistoryResetReason::None)
+        pendingHistoryReset_ = reason;
+}
+
+static uint32_t formatBytesPerPixel(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R16_SFLOAT: return 2;
+        case VK_FORMAT_R32_SFLOAT:
+        case VK_FORMAT_D32_SFLOAT: return 4;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return 8;
+        default: return 0;
+    }
+}
+
+static uint32_t formatChannelCount(VkFormat format) {
+    return format == VK_FORMAT_R16G16B16A16_SFLOAT ? 4u : 1u;
+}
+
+static float halfToFloat(uint16_t bits) {
+    const float sign = (bits & 0x8000u) ? -1.0f : 1.0f;
+    const uint32_t exponent = (bits >> 10) & 0x1fu;
+    const uint32_t mantissa = bits & 0x03ffu;
+    if (exponent == 0)
+        return sign * std::ldexp(static_cast<float>(mantissa), -24);
+    if (exponent == 31) {
+        if (mantissa == 0)
+            return sign * std::numeric_limits<float>::infinity();
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    return sign * std::ldexp(1.0f + static_cast<float>(mantissa) / 1024.0f,
+                             static_cast<int>(exponent) - 15);
+}
+
+bool DLSS45Recon::readbackImage(const ImageObj& image, VkFormat format,
+                                VkImageAspectFlags aspect,
+                                uint32_t width, uint32_t height,
+                                VkCommandPool commandPool, VkQueue queue,
+                                ReadbackImage& output) {
+    output = {};
+    const uint32_t bytesPerPixel = formatBytesPerPixel(format);
+    const uint32_t channels = formatChannelCount(format);
+    if (!image.image || !commandPool || !queue || !bytesPerPixel ||
+        width == 0 || height == 0)
+        return false;
+    const uint64_t pixelCount = static_cast<uint64_t>(width) * height;
+    if (pixelCount > std::numeric_limits<size_t>::max() / channels ||
+        pixelCount > std::numeric_limits<VkDeviceSize>::max() / bytesPerPixel)
+        return false;
+    const VkDeviceSize byteSize = pixelCount * bytesPerPixel;
+
+    if (vkQueueWaitIdle(queue) != VK_SUCCESS) return false;
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    auto cleanup = [&]() {
+        if (command) vkFreeCommandBuffers(device_, commandPool, 1, &command);
+        if (stagingMemory) vkFreeMemory(device_, stagingMemory, nullptr);
+        if (staging) vkDestroyBuffer(device_, staging, nullptr);
+    };
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = byteSize;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device_, &bufferInfo, nullptr, &staging) != VK_SUCCESS)
+        return false;
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_, staging, &requirements);
+    const uint32_t memoryType = findMemType(
+        phys_, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (memoryType == ~0u) {
+        cleanup();
+        return false;
+    }
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(device_, &allocation, nullptr, &stagingMemory) != VK_SUCCESS ||
+        vkBindBufferMemory(device_, staging, stagingMemory, 0) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    VkCommandBufferAllocateInfo commandAllocation{};
+    commandAllocation.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandAllocation.commandPool = commandPool;
+    commandAllocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandAllocation.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(device_, &commandAllocation, &command) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(command, &begin) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    const VkPipelineStageFlags shaderStages =
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    transitionLayout(command, image.image, aspect,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     shaderStages, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                     VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource.aspectMask = aspect;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(command, image.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           staging, 1, &copy);
+    transitionLayout(command, image.image, aspect,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_TRANSFER_BIT, shaderStages,
+                     VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT);
+    VkBufferMemoryBarrier bufferBarrier{};
+    bufferBarrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bufferBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bufferBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    bufferBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufferBarrier.buffer = staging;
+    bufferBarrier.offset = 0;
+    bufferBarrier.size = byteSize;
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_HOST_BIT, 0,
+                         0, nullptr, 1, &bufferBarrier, 0, nullptr);
+    if (vkEndCommandBuffer(command) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command;
+    if (vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
+        vkQueueWaitIdle(queue) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, stagingMemory, 0, byteSize, 0, &mapped) != VK_SUCCESS) {
+        cleanup();
+        return false;
+    }
+    output.width = width;
+    output.height = height;
+    output.channels = channels;
+    output.values.resize(static_cast<size_t>(pixelCount) * channels);
+    if (format == VK_FORMAT_R16G16B16A16_SFLOAT ||
+        format == VK_FORMAT_R16_SFLOAT) {
+        const auto* source = static_cast<const uint16_t*>(mapped);
+        for (size_t i = 0; i < output.values.size(); ++i)
+            output.values[i] = halfToFloat(source[i]);
+    } else {
+        std::memcpy(output.values.data(), mapped,
+                    output.values.size() * sizeof(float));
+    }
+    vkUnmapMemory(device_, stagingMemory);
+    cleanup();
+    return true;
+}
+
+enum class RT4DExportView {
+    Color,
+    Depth,
+    Normal,
+    Motion,
+    Confidence,
+    Material,
+};
+
+static uint8_t exportByte(float value) {
+    if (!std::isfinite(value)) value = 0.0f;
+    value = std::clamp(value, 0.0f, 1.0f);
+    return static_cast<uint8_t>(std::lround(value * 255.0f));
+}
+
+static bool writeExportPng(const std::filesystem::path& path,
+                           const DLSS45Recon::ReadbackImage& image,
+                           RT4DExportView view,
+                           const DLSS45Recon::ReadbackImage* depthMask = nullptr) {
+    if (image.values.empty() || image.width == 0 || image.height == 0)
+        return false;
+    std::vector<uint8_t> rgba(
+        static_cast<size_t>(image.width) * image.height * 4, 255);
+    const size_t pixels = static_cast<size_t>(image.width) * image.height;
+    for (size_t pixel = 0; pixel < pixels; ++pixel) {
+        const bool background = depthMask &&
+            (!std::isfinite(depthMask->values[pixel]) ||
+             depthMask->values[pixel] >= 0.9999f);
+        if (background) {
+            const size_t destination = pixel * 4;
+            rgba[destination] = 0;
+            rgba[destination + 1] = 0;
+            rgba[destination + 2] = 0;
+            continue;
+        }
+        const size_t source = pixel * image.channels;
+        float r = image.values[source];
+        float g = image.channels > 1 ? image.values[source + 1] : r;
+        float b = image.channels > 2 ? image.values[source + 2] : r;
+        switch (view) {
+            case RT4DExportView::Color:
+            case RT4DExportView::Normal:
+                break;
+            case RT4DExportView::Depth:
+                r = g = b = std::sqrt(std::max(0.0f, 1.0f - r));
+                break;
+            case RT4DExportView::Motion: {
+                const float magnitude = std::sqrt(r * r + g * g);
+                b = magnitude / 16.0f;
+                r = 0.5f + r / 32.0f;
+                g = 0.5f + g / 32.0f;
+                break;
+            }
+            case RT4DExportView::Confidence:
+                g = b = r;
+                break;
+            case RT4DExportView::Material:
+                r = g = b = (r + 1.0f) / 6.0f;
+                break;
+        }
+        const size_t destination = pixel * 4;
+        rgba[destination] = exportByte(r);
+        rgba[destination + 1] = exportByte(g);
+        rgba[destination + 2] = exportByte(b);
+    }
+    return stbi_write_png(path.string().c_str(), static_cast<int>(image.width),
+                          static_cast<int>(image.height), 4, rgba.data(),
+                          static_cast<int>(image.width * 4)) != 0;
+}
+
+bool DLSS45Recon::exportObservability(VkCommandPool commandPool, VkQueue queue,
+                                      const std::string& directory,
+                                      uint32_t frameIndex, bool writeImages,
+                                      RT4DFrameMetrics& metrics) {
+    metrics = {};
+    metrics.frameIndex = frameIndex;
+    metrics.historyValid = lastFrameHistoryValid_;
+    metrics.resetReason = lastFrameResetReason_;
+
+    ReadbackImage color;
+    ReadbackImage depth;
+    ReadbackImage motion;
+    ReadbackImage reprojected;
+    ReadbackImage confidence;
+    if (!readbackImage(colorLDR_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, color) ||
+        !readbackImage(depth_, VK_FORMAT_D32_SFLOAT,
+                       VK_IMAGE_ASPECT_DEPTH_BIT, lrW_, lrH_,
+                       commandPool, queue, depth) ||
+        !readbackImage(motion_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, motion) ||
+        !readbackImage(reprojColor_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, reprojected) ||
+        !readbackImage(reprojConf_, VK_FORMAT_R16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, confidence))
+        return false;
+
+    std::vector<double> motionMagnitudes;
+    double motionSum = 0.0;
+    double confidenceSum = 0.0;
+    double residualSum = 0.0;
+    uint64_t acceptedPixels = 0;
+    uint64_t residualPixels = 0;
+    const size_t pixels = static_cast<size_t>(lrW_) * lrH_;
+    motionMagnitudes.reserve(pixels / 4);
+    for (size_t pixel = 0; pixel < pixels; ++pixel) {
+        const float pixelDepth = depth.values[pixel];
+        if (!std::isfinite(pixelDepth) || pixelDepth >= 0.9999f) continue;
+        ++metrics.foregroundPixels;
+        const size_t rgbaIndex = pixel * 4;
+        const double motionX = motion.values[rgbaIndex];
+        const double motionY = motion.values[rgbaIndex + 1];
+        const double magnitude = std::sqrt(motionX * motionX + motionY * motionY);
+        motionMagnitudes.push_back(magnitude);
+        motionSum += magnitude;
+        metrics.maxMotionPixels = std::max(metrics.maxMotionPixels, magnitude);
+
+        const double pixelConfidence = std::clamp(
+            static_cast<double>(confidence.values[pixel]), 0.0, 1.0);
+        confidenceSum += pixelConfidence;
+        if (pixelConfidence >= 0.5) ++acceptedPixels;
+        if (pixelConfidence > 0.01) {
+            const double currentLuma =
+                0.2126 * color.values[rgbaIndex] +
+                0.7152 * color.values[rgbaIndex + 1] +
+                0.0722 * color.values[rgbaIndex + 2];
+            const double previousLuma =
+                0.2126 * reprojected.values[rgbaIndex] +
+                0.7152 * reprojected.values[rgbaIndex + 1] +
+                0.0722 * reprojected.values[rgbaIndex + 2];
+            residualSum += std::abs(currentLuma - previousLuma);
+            ++residualPixels;
+        }
+    }
+    if (metrics.foregroundPixels > 0) {
+        const double denominator = static_cast<double>(metrics.foregroundPixels);
+        metrics.meanMotionPixels = motionSum / denominator;
+        metrics.p95MotionPixels = rt4dPercentile(motionMagnitudes, 0.95);
+        metrics.meanReprojectionConfidence = confidenceSum / denominator;
+        metrics.acceptedHistoryRatio = static_cast<double>(acceptedPixels) / denominator;
+    }
+    if (residualPixels > 0)
+        metrics.meanAcceptedLumaResidual =
+            residualSum / static_cast<double>(residualPixels);
+
+    if (!writeImages) return true;
+    if (directory.empty()) return false;
+    std::error_code directoryError;
+    std::filesystem::create_directories(directory, directoryError);
+    if (directoryError) return false;
+    const std::filesystem::path root(directory);
+
+    ReadbackImage normals;
+    ReadbackImage material;
+    ReadbackImage historyColor;
+    ReadbackImage historyDepth;
+    ReadbackImage historyNormal;
+    if (!readbackImage(normals_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, normals) ||
+        !readbackImage(material_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, material) ||
+        !readbackImage(colorHistory_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, historyColor) ||
+        !readbackImage(depthHistory_, VK_FORMAT_D32_SFLOAT,
+                       VK_IMAGE_ASPECT_DEPTH_BIT, lrW_, lrH_,
+                       commandPool, queue, historyDepth) ||
+        !readbackImage(normalHistory_, VK_FORMAT_R16G16B16A16_SFLOAT,
+                       VK_IMAGE_ASPECT_COLOR_BIT, lrW_, lrH_,
+                       commandPool, queue, historyNormal))
+        return false;
+
+    const bool imagesWritten =
+        writeExportPng(root / "gbuffer-color.png", color, RT4DExportView::Color) &&
+        writeExportPng(root / "gbuffer-depth.png", depth, RT4DExportView::Depth) &&
+        writeExportPng(root / "gbuffer-normal.png", normals, RT4DExportView::Normal) &&
+        writeExportPng(root / "gbuffer-material.png", material,
+                       RT4DExportView::Material, &depth) &&
+        writeExportPng(root / "motion.png", motion, RT4DExportView::Motion,
+                       &depth) &&
+        writeExportPng(root / "reprojected-color.png", reprojected, RT4DExportView::Color) &&
+        writeExportPng(root / "reprojection-confidence.png", confidence,
+                       RT4DExportView::Confidence, &depth) &&
+        writeExportPng(root / "history-color-next.png", historyColor,
+                       RT4DExportView::Color) &&
+        writeExportPng(root / "history-depth-next.png", historyDepth,
+                       RT4DExportView::Depth) &&
+        writeExportPng(root / "history-normal-next.png", historyNormal,
+                       RT4DExportView::Normal);
+    if (!imagesWritten) return false;
+
+    std::ofstream manifest(root / "manifest.json");
+    if (!manifest) return false;
+    manifest << std::setprecision(9)
+             << "{\n"
+             << "  \"schema\": \"rt4d-observability-export/0.4\",\n"
+             << "  \"frameIndex\": " << frameIndex << ",\n"
+             << "  \"dimensions\": [" << lrW_ << ", " << lrH_ << "],\n"
+             << "  \"historyValidForFrame\": "
+             << (lastFrameHistoryValid_ ? "true" : "false") << ",\n"
+             << "  \"historyResetReason\": \""
+             << rt4dHistoryResetReasonName(lastFrameResetReason_) << "\",\n"
+             << "  \"historyExportSemantic\": "
+                "\"post_frame_state_persisted_for_next_frame\",\n"
+             << "  \"motionVisualization\": "
+                "\"foreground masked; R=0.5+xPixels/32, "
+                "G=0.5+yPixels/32, B=magnitude/16\",\n"
+             << "  \"depthVisualization\": "
+                "\"sqrt(one_minus_device_depth)\",\n"
+             << "  \"confidenceVisualization\": "
+                "\"foreground-masked grayscale\",\n"
+             << "  \"files\": [\n"
+             << "    \"gbuffer-color.png\", \"gbuffer-depth.png\", "
+                "\"gbuffer-normal.png\", \"gbuffer-material.png\",\n"
+             << "    \"motion.png\", \"reprojected-color.png\", "
+                "\"reprojection-confidence.png\",\n"
+             << "    \"history-color-next.png\", \"history-depth-next.png\", "
+                "\"history-normal-next.png\"\n"
+             << "  ]\n"
+             << "}\n";
+    return manifest.good();
 }
 
 // ---- shutdown ------------------------------------------------------------
@@ -1163,5 +1610,10 @@ void DLSS45Recon::shutdown(VkDevice device) {
     materialSets_.clear();
     deviceLocalTextureCount_ = 0;
     sourceTextureUploadCount_ = 0;
+    firstFrame_ = true;
+    pendingHistoryReset_ = RT4DHistoryResetReason::None;
+    lastFrameResetReason_ = RT4DHistoryResetReason::InitialFrame;
+    lastFrameHistoryValid_ = false;
+    historyResetCount_ = 0;
     device_ = VK_NULL_HANDLE;
 }
