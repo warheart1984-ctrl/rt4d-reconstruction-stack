@@ -15,9 +15,9 @@ public:
     bool init(VkPhysicalDevice phys, VkDevice device, VkSurfaceKHR surface,
               uint32_t width, uint32_t height);
     void shutdown(VkDevice device);
-    bool recreate(VkDevice device, uint32_t width, uint32_t height);
 
-    uint32_t acquireNextImage(VkDevice device, VkSemaphore signalSemaphore);
+    VkResult acquireNextImage(VkDevice device, VkSemaphore signalSemaphore,
+                              uint32_t& imageIndex);
     VkResult present(VkQueue queue, uint32_t imageIndex, VkSemaphore waitSemaphore);
 
     VkFormat colorFormat() const { return colorFormat_; }

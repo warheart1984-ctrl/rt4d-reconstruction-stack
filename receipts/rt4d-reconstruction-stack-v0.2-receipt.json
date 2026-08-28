@@ -1,0 +1,76 @@
+{
+  "schema": "rt4d-reconstruction-stack-receipt/0.2",
+  "status": "passed_live_multi_frame_gpu_capture",
+  "created_at": "2026-08-27T22:05:50-04:00",
+  "backend": "Vulkan",
+  "hardware": {
+    "adapter": "AMD Radeon RX 480 Graphics (RADV POLARIS10)",
+    "driver": "amdgpu"
+  },
+  "build": {
+    "command": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON && cmake --build build --parallel 4",
+    "binary": "build/mandala_rasterize",
+    "binary_sha256": "af20aa7e1d02a247ebfaa3236c3a02c358c6e9139c96181e587a3de93ee5599e",
+    "compiler_warnings_as_errors": true,
+    "ctest": { "passed": 1, "failed": 0 }
+  },
+  "asset": {
+    "path": "armored-sentinel-v1.glb",
+    "sha256": "06c76ee61f1582708e50fe208939180ba9b529825052db5afd7f1d2e54e0201e",
+    "vertices": 2210,
+    "indices": 2160,
+    "primitives": 5,
+    "source_uv_primitives": 5,
+    "declared_material_slots": 6,
+    "primitive_material_assignments": 5,
+    "index_rebasing_contract_test": "passed"
+  },
+  "temporal": {
+    "frames_rendered": 3,
+    "first_frame_history": "explicitly_invalid_and_rejected",
+    "persisted_history": ["color", "depth", "normal"],
+    "history_update": "current low-resolution G-buffer copied after every completed frame",
+    "motion_quality_status": "not_graded_static_camera"
+  },
+  "reconstruction": {
+    "passes_executed": ["gbuffer", "temporal_reprojection", "confidence_denoiser", "classical_2x_super_resolution", "tone_map_composite"],
+    "shader_sha256": {
+      "gbuffer.vert": "064ed722acd333c9dde4a9b8e4e797abf7bec1592d23a3d80a9bda98b97ca561",
+      "gbuffer.frag": "3d922a2815e9a4ac483114b5dce4a61edfce9f4538d39b520e0884c0b6160b5b",
+      "reprojection.comp": "6dd28a0411175a9621b88604b2a39d4fd16f439e775d73d4039cdb3545e248b2",
+      "denoiser.comp": "ea1207d2d6154ddd2948ac04c01e63100fd2493b7e6093fc6fae7274f908ea73",
+      "sr_classic.comp": "9e4c66b8dff1e9d18fc7027a284caa09b3baf5762d1fdbe33c5177755d209fe9",
+      "tone_map.frag": "14d14426e3ce2bcc842f6905daf3235ca089a36879cfd94fb094337e9c34a263"
+    }
+  },
+  "captures": {
+    "baseline": {
+      "path": "receipts/armored-sentinel-raster-v0.2.png",
+      "frames": 2,
+      "sha256": "57fe9f9ae173068e9d0fa7f171e7845e605f3aa3340a7c9e6df86534f202c77b",
+      "observed_gpu_ms": 0.068
+    },
+    "reconstruction": {
+      "path": "receipts/armored-sentinel-rt4d-reconstruction-v0.2.png",
+      "log": "receipts/armored-sentinel-rt4d-reconstruction-v0.2.run.log",
+      "dimensions": [1280, 720],
+      "sha256": "dd3a96e089ef62c26c1d46e8cbdb87f014a818e620dce3cd562e49d82ff3e1ad",
+      "observed_gpu_ms": [0.828, 0.801],
+      "validation_messages_observed": 0
+    }
+  },
+  "materials": {
+    "source_uv_import": "texcoord_0_present_on_all_five_primitives",
+    "uv_authorship_reviewed": false,
+    "material_assignment_import": "five_primitive_assignments_preserved_as_gbuffer_ids",
+    "declared_material_slots": 6,
+    "rendering_status": "provisional_geometry_based",
+    "artist_reviewed": false,
+    "authored_texture_sampling": false
+  },
+  "limitations": [
+    "The static three-frame capture proves history lifecycle and execution, not motion quality.",
+    "GPU timings are point observations, not a statistical benchmark.",
+    "Window resize, G-buffer visualizers, authored texture sampling, ML super-resolution, frame generation, and NVIDIA DLSS are not claimed."
+  ]
+}

@@ -42,7 +42,6 @@ public:
     // lrScaleFactor: hr = lr * scale (e.g. 2 => render LR at half resolution).
     bool init(VkDevice device, VkPhysicalDevice phys,
               VkRenderPass rendererRenderPass,
-              VkFormat swapchainFormat,
               uint32_t displayW, uint32_t displayH,
               uint32_t lrScale = 2);
     void shutdown(VkDevice device);
@@ -72,7 +71,7 @@ private:
         VkImageView view = VK_NULL_HANDLE;
     };
     ImageObj colorLDR_, depth_, normals_, motion_, material_, noise_;
-    ImageObj colorHistory_, depthHistory_;
+    ImageObj colorHistory_, depthHistory_, normalHistory_;
     ImageObj reprojColor_, reprojConf_, denoised_, denoiseConf_;
     ImageObj colorSR_, depthHR_, motionHR_;
 
@@ -116,8 +115,10 @@ private:
 
     bool createImage(ImageObj& img, uint32_t w, uint32_t h, VkFormat fmt,
                      VkImageUsageFlags usage, VkImageAspectFlags aspect);
-    bool createRenderPass(VkFormat swapchainFormat);
+    bool createRenderPass();
     bool createMeshResources();
     bool createDescriptors();
+    void initializeHistory(VkCommandBuffer cmd);
+    void updateHistory(VkCommandBuffer cmd);
     void matMul(float* out, const float* a, const float* b); // out = a*b (4x4)
 };

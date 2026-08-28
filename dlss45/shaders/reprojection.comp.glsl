@@ -14,7 +14,7 @@ layout(binding = 6, r16f)    uniform writeonly image2D oReprojectionConfidence;
 layout(push_constant) uniform Params {
     float sigmaD;
     float mMax;
-    float _pad0;
+    float historyValid;
     float _pad1;
 } params;
 
@@ -44,6 +44,7 @@ void main() {
     bool offscreen = (uvPrev.x < 0.0 || uvPrev.x > 1.0 ||
                       uvPrev.y < 0.0 || uvPrev.y > 1.0);
     float c_hist = c_d * c_m;
+    if (params.historyValid < 0.5) c_hist = 0.0;
     if (offscreen) c_hist = 0.0;
 
     vec4 reproj = (c_hist > 0.0) ? prevColor : vec4(0.0);

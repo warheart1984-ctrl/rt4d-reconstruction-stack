@@ -12,12 +12,14 @@ public:
     struct Params {
         float wD = 1.0f, wN = 1.0f, wM = 1.0f, wV = 0.5f;
         float sigmaD = 0.02f, mMax = 32.0f, specThreshold = 0.3f, depthGradSlope = 0.05f;
+        float historyValid = 0.0f;
     };
 
     // dsLayout bindings 0..8 samplers, 9 write color denoised, 10 write confidence.
     bool init(VkDevice device, VkDescriptorSetLayout dsLayout);
     void shutdown(VkDevice device);
-    void record(VkCommandBuffer cmd, VkDescriptorSet ds, uint32_t w, uint32_t h);
+    void record(VkCommandBuffer cmd, VkDescriptorSet ds, uint32_t w, uint32_t h,
+                bool historyValid);
     VkPipelineLayout layout() const { return layout_; }
 
 private:

@@ -17,7 +17,7 @@ public:
     struct Params {
         float sigmaD = 0.02f;
         float mMax = 32.0f;
-        float _pad0 = 0.f;
+        float historyValid = 0.f;
         float _pad1 = 0.f;
     };
 
@@ -27,7 +27,8 @@ public:
     bool init(VkDevice device, VkDescriptorSetLayout dsLayout);
     void shutdown(VkDevice device);
 
-    void record(VkCommandBuffer cmd, VkDescriptorSet ds, uint32_t w, uint32_t h);
+    void record(VkCommandBuffer cmd, VkDescriptorSet ds, uint32_t w, uint32_t h,
+                bool historyValid);
 
     VkPipelineLayout layout() const { return layout_; }
 

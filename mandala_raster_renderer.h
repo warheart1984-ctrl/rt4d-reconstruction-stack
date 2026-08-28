@@ -2,7 +2,6 @@
 
 #include "raster_pipeline.h"
 #include "swapchain_manager.h"
-#include "vertex_buffer_manager.h"
 #include "scene_data.h"
 #include "gltf_mesh.h"
 #include "dlss45/dlss45_recon.h"
@@ -51,7 +50,6 @@ struct GpuTimer {
     float timestampPeriod = 1.0f;
     uint32_t count = 0;
     int currentPool = 0;
-    bool firstFrame = true;
 
     void init(VkDevice dev, VkPhysicalDevice phys, uint32_t maxQueries = 64) {
         device = dev;
@@ -82,22 +80,31 @@ struct GpuTimer {
 
     void nextFrame() {
         currentPool = 1 - currentPool;
-        firstFrame = false;
     }
 
     void resetPoolInCmd(VkCommandBuffer cmd) {
         vkCmdResetQueryPool(cmd, pools[currentPool], 0, count);
     }
 
-double getMs(uint32_t start, uint32_t end, int poolIndex) {
+    double getMs(uint32_t start, uint32_t end, int poolIndex) {
+        if (start >= count || end >= count || poolIndex < 0 || poolIndex > 1)
+            return 0.0;
         uint64_t timestamps[2] = {0, 0};
-        VkResult res = vkGetQueryPoolResults(device, pools[poolIndex], start, 2, sizeof(timestamps),
-                              timestamps, sizeof(uint64_t),
-                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-        if (res != VK_SUCCESS) {
+        const VkQueryResultFlags flags =
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT;
+        const VkResult startResult =
+            vkGetQueryPoolResults(device, pools[poolIndex], start, 1,
+                                  sizeof(uint64_t), &timestamps[0],
+                                  sizeof(uint64_t), flags);
+        const VkResult endResult =
+            vkGetQueryPoolResults(device, pools[poolIndex], end, 1,
+                                  sizeof(uint64_t), &timestamps[1],
+                                  sizeof(uint64_t), flags);
+        if (startResult != VK_SUCCESS || endResult != VK_SUCCESS ||
+            timestamps[1] < timestamps[0]) {
             return 0.0;
         }
-        return double(timestamps[end] - timestamps[start]) * timestampPeriod / 1e6;
+        return double(timestamps[1] - timestamps[0]) * timestampPeriod / 1e6;
     }
 };
 
@@ -107,16 +114,12 @@ public:
               VkDevice device, VkSurfaceKHR surface,
               const RenderConfig& cfg);
     void shutdown();
-    void resize(uint32_t w, uint32_t h);
     bool renderFrame(float deltaTime);
     void setScene(RenderScene scene);
     bool captureScreenshot(const std::string& path);
 
     // Debug / profiling
-    void setDebugFlags(bool gpuTimer, bool dumpGBuffer,
-                       int visualizer, const std::string& captureSeqDir,
-                       const std::string& encodePath);
-    void dumpGBuffer(const std::string& dir);
+    void setDebugFlags(bool gpuTimer);
     void dumpImage(VkImage image, VkFormat format, uint32_t w, uint32_t h,
                    const std::string& path);
 
@@ -134,7 +137,7 @@ private:
     bool createFramebuffers();
     bool createFrameResources();
     bool uploadLivingMapBuffers();
-    void recordCommandBuffer(FrameResources& frame, uint32_t swapIndex);
+    bool recordCommandBuffer(FrameResources& frame, uint32_t swapIndex);
     void updateCamera(float aspect);
 
     VkInstance instance_ = VK_NULL_HANDLE;
@@ -147,7 +150,6 @@ private:
 
     SwapchainManager swapchain_;
     RasterPipeline pipeline_;
-    VertexBufferManager vbm_;
 
     VkCommandPool cmdPool_ = VK_NULL_HANDLE;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
@@ -167,16 +169,12 @@ private:
 
     std::array<FrameResources, 2> frames_{};
     int currentFrame_ = 0;
+    uint64_t renderedFrameCount_ = 0;
     uint32_t lastSwapIndex_ = 0;
 
     // Debug / profiling
     GpuTimer gpuTimer_;
     bool debugGpuTimer_ = false;
-    bool debugDumpGBuffer_ = false;
-    int debugVisualizer_ = 0;  // 0=none, 1=motion, 2=confidence, 3=history, 4=stability
-    std::string debugCaptureSeqDir_;
-    int debugFrameIndex_ = 0;
-
     RenderConfig config_;
     float time_ = 0.0f;
 };

@@ -12,6 +12,9 @@
 void GLTFMeshScene::clear() {
     vertices_.clear();
     indices_.clear();
+    primitives_.clear();
+    sourceUvPrimitiveCount_ = 0;
+    materialCount_ = 0;
     name_.clear();
 }
 
@@ -50,12 +53,24 @@ bool GLTFMeshScene::load(const char* path) {
         return false;
     }
 
+    res = cgltf_validate(data);
+    if (res != cgltf_result_success) {
+        fprintf(stderr, "[GLTF] validation failed for %s (code %d)\n", path, (int)res);
+        cgltf_free(data);
+        return false;
+    }
+
     if (data->meshes_count > 0 && data->meshes[0].name) name_ = data->meshes[0].name;
+    materialCount_ = static_cast<uint32_t>(data->materials_count);
 
     for (size_t mi = 0; mi < data->meshes_count; mi++) {
         cgltf_mesh& mesh = data->meshes[mi];
         for (size_t pi = 0; pi < mesh.primitives_count; pi++) {
             cgltf_primitive& prim = mesh.primitives[pi];
+            if (prim.type != cgltf_primitive_type_triangles) {
+                fprintf(stderr, "[GLTF] skipping non-triangle primitive %zu in mesh %zu\n", pi, mi);
+                continue;
+            }
 
             const cgltf_accessor* posAcc = nullptr;
             const cgltf_accessor* normAcc = nullptr;
@@ -64,7 +79,7 @@ bool GLTFMeshScene::load(const char* path) {
                 cgltf_attribute& attr = prim.attributes[ai];
                 if (attr.type == cgltf_attribute_type_position) posAcc = attr.data;
                 else if (attr.type == cgltf_attribute_type_normal) normAcc = attr.data;
-                else if (attr.type == cgltf_attribute_type_texcoord) uvAcc = attr.data;
+                else if (attr.type == cgltf_attribute_type_texcoord && attr.index == 0) uvAcc = attr.data;
             }
             if (!posAcc) continue;
 
@@ -72,72 +87,62 @@ bool GLTFMeshScene::load(const char* path) {
             size_t base = vertices_.size();
             vertices_.resize(base + vcount);
 
-            // cgltf offsets are byte offsets. Keep these as byte pointers until
-            // each attribute value is read; adding them to float pointers scaled
-            // every non-zero GLB offset by four and produced invalid geometry.
-            const char* posData = (const char*)posAcc->buffer_view->buffer->data
-                + posAcc->buffer_view->offset + posAcc->offset;
-            const char* normData = nullptr;
-            const char* uvData = nullptr;
-            cgltf_size normStride = 0, posStride = 0, uvStride = 0;
-            posStride = posAcc->stride;
-            if (normAcc && normAcc->buffer_view) {
-                normData = (const char*)normAcc->buffer_view->buffer->data
-                    + normAcc->buffer_view->offset + normAcc->offset;
-                normStride = normAcc->stride;
-            }
-            if (uvAcc && uvAcc->buffer_view) {
-                uvData = (const char*)uvAcc->buffer_view->buffer->data
-                    + uvAcc->buffer_view->offset + uvAcc->offset;
-                uvStride = uvAcc->stride;
+            const bool hasNormals = normAcc && normAcc->count == vcount;
+            const bool hasSourceUv = uvAcc && uvAcc->count == vcount;
+            int32_t materialIndex = -1;
+            if (prim.material && data->materials_count > 0) {
+                materialIndex = static_cast<int32_t>(prim.material - data->materials);
             }
 
             for (size_t i = 0; i < vcount; i++) {
                 auto& v = vertices_[base + i];
-                const char* p = posData + i * posStride;
-                v.position[0] = *(const float*)(p);
-                v.position[1] = *(const float*)(p + 4);
-                v.position[2] = *(const float*)(p + 8);
+                if (!cgltf_accessor_read_float(posAcc, i, v.position, 3)) {
+                    fprintf(stderr, "[GLTF] failed reading position %zu in primitive %zu\n", i, pi);
+                    cgltf_free(data);
+                    clear();
+                    return false;
+                }
 
-                if (normData) {
-                    const char* n = normData + i * normStride;
-                    v.normal[0] = *(const float*)(n);
-                    v.normal[1] = *(const float*)(n + 4);
-                    v.normal[2] = *(const float*)(n + 8);
-                } else {
+                if (!hasNormals || !cgltf_accessor_read_float(normAcc, i, v.normal, 3)) {
                     v.normal[0] = 0; v.normal[1] = 1; v.normal[2] = 0;
                 }
 
-                if (uvData) {
-                    const char* u = uvData + i * uvStride;
-                    v.uv[0] = *(const float*)(u);
-                    v.uv[1] = *(const float*)(u + 4);
-                } else {
+                if (!hasSourceUv || !cgltf_accessor_read_float(uvAcc, i, v.uv, 2)) {
                     v.uv[0] = 0; v.uv[1] = 0;
                 }
+                v.materialId = materialIndex >= 0 ? static_cast<float>(materialIndex) : 0.0f;
             }
 
+            const size_t ibase = indices_.size();
             if (prim.indices) {
-                cgltf_accessor* idx = prim.indices;
-                size_t icount = idx->count;
-                size_t ibase = indices_.size();
+                const cgltf_accessor* idx = prim.indices;
+                const size_t icount = idx->count;
                 indices_.resize(ibase + icount);
-                const char* idata = (const char*)idx->buffer_view->buffer->data
-                    + idx->buffer_view->offset + idx->offset;
-                cgltf_size istride = idx->stride;
-                cgltf_component_type ctype = idx->component_type;
                 for (size_t i = 0; i < icount; i++) {
-                    const char* p = idata + i * istride;
-                    if (ctype == cgltf_component_type_r_16u)
-                        indices_[ibase + i] = *(const uint16_t*)p;
-                    else if (ctype == cgltf_component_type_r_32u)
-                        indices_[ibase + i] = *(const uint32_t*)p;
-                    else if (ctype == cgltf_component_type_r_8u)
-                        indices_[ibase + i] = *(const uint8_t*)p;
-                    else
-                        indices_[ibase + i] = *(const uint16_t*)p;
+                    const cgltf_size localIndex = cgltf_accessor_read_index(idx, i);
+                    if (localIndex >= vcount) {
+                        fprintf(stderr, "[GLTF] primitive %zu index %zu is out of range\n", pi, i);
+                        cgltf_free(data);
+                        clear();
+                        return false;
+                    }
+                    indices_[ibase + i] = static_cast<uint32_t>(base + localIndex);
                 }
+            } else {
+                indices_.resize(ibase + vcount);
+                for (size_t i = 0; i < vcount; ++i)
+                    indices_[ibase + i] = static_cast<uint32_t>(base + i);
             }
+
+            GLTFPrimitiveRange range{};
+            range.firstIndex = static_cast<uint32_t>(ibase);
+            range.indexCount = static_cast<uint32_t>(indices_.size() - ibase);
+            range.firstVertex = static_cast<uint32_t>(base);
+            range.vertexCount = static_cast<uint32_t>(vcount);
+            range.materialIndex = materialIndex;
+            range.hasSourceUv = hasSourceUv;
+            primitives_.push_back(range);
+            if (hasSourceUv) ++sourceUvPrimitiveCount_;
         }
     }
 
